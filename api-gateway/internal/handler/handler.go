@@ -6,28 +6,38 @@ import (
 	"strings"
 
 	"api-gateway/internal/model"
+	"api-gateway/internal/repository"
 )
 
 type CreateOrderRequest struct {
 	FromAddress model.Address `json:"from_address"`
 	ToAddress   model.Address `json:"to_address"`
+	Price       float64       `json:"price"`
+	UserID      string        `json:"user_id"`
 }
 
 type OrdersHandler struct {
-	orders map[string]model.Order
+	repo repository.OrderRepository
+}
+
+func NewOrdersHandler(repo repository.OrderRepository) *OrdersHandler {
+	return &OrdersHandler{
+		repo: repo,
+	}
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req CreateOrderRequest
-	json.NewDecoder(r.Body).Decode(&req)
-
-	order := model.Order{
-		ID:          "ORD-" + string(len(h.orders)+1),
-		FromAddress: req.FromAddress,
-		ToAddress:   req.ToAddress,
-		Status:      "created",
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
 	}
-	h.orders[order.ID] = order
+
+	order := model.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Price)
+	if err := h.repo.Create(r.Context(), order); err != nil {
+		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	w.Header().Set("Content-Type", "application/json")
@@ -39,8 +49,8 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/orders/")
 	id = strings.TrimSuffix(id, "/")
 
-	order, ok := h.orders[id]
-	if !ok {
+	order, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
 		http.Error(w, `{"error": "not found"}`, http.StatusNotFound)
 		return
 	}
@@ -51,9 +61,10 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 // GET /orders/{id} - Get all
 func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
-	var orders []model.Order
-	for _, o := range h.orders {
-		orders = append(orders, o)
+	orders, err := h.repo.List(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "failed to list orders"}`, http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
