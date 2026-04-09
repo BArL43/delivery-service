@@ -19,18 +19,20 @@ type Order struct {
 	UserID      string
 	FromAddress Address
 	ToAddress   Address
+	Price       float64
 	Status      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
-func NewOrder(userID string, from, to Address) Order {
+func NewOrder(userID string, from, to Address, price float64) Order {
 	now := time.Now()
 	return Order{
 		ID:          uuid.New().String(),
 		UserID:      userID,
 		FromAddress: from,
 		ToAddress:   to,
+		Price:       price,
 		Status:      "created",
 		CreatedAt:   now,
 		UpdatedAt:   now,
