@@ -1,0 +1,15 @@
+:80 {
+  encode gzip
+
+  handle /api/* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /health {
+    reverse_proxy auth-service:8081
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
+}

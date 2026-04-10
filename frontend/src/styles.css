@@ -322,6 +322,13 @@ input:focus {
   filter: brightness(1.06);
 }
 
+.submit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.76;
+  transform: none;
+  filter: none;
+}
+
 .error {
   margin: 0;
   color: var(--error);
@@ -334,6 +341,17 @@ input:focus {
   border-radius: 10px;
   background: rgba(15, 138, 84, 0.12);
   color: var(--ok);
+  font-size: 13px;
+  font-weight: 700;
+  animation: soft-up 0.35s ease;
+}
+
+.api-error {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(204, 47, 47, 0.1);
+  color: var(--error);
   font-size: 13px;
   font-weight: 700;
   animation: soft-up 0.35s ease;

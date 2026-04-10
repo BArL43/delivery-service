@@ -55,7 +55,93 @@ go mod tidy
 go run ./cmd/api
 ```
 
+По умолчанию auth-service запускается на порту 8081 и ожидает PostgreSQL по DSN:
+
+```text
+postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+```
+
+Можно переопределить через переменные окружения:
+
+```bash
+AUTH_PORT=8081
+AUTH_DB_DSN=postgres://user:pass@localhost:5432/dbname?sslmode=disable
+JWT_SECRET=your-secret-key
+```
+
+Во frontend включен Vite proxy с маршрутом /api -> http://localhost:8081.
+
+## Запуск через Docker Compose + Caddy
+
+В репозиторий добавлены:
+
+- docker-compose.yml
+- Caddyfile
+
+Сценарий:
+
+- Caddy принимает запросы на порту 8080.
+- `/api/*` и `/health` проксируются в auth-service.
+- Все остальные запросы идут во frontend.
+
+Команды запуска:
+
+```bash
+docker compose up --build
+```
+
+После старта приложение доступно по адресу:
+
+```text
+http://localhost:8080
+```
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+## Деплой через Docker Hub
+
+Для сервера можно не собирать образы на месте, а тянуть готовые из Docker Hub.
+
+Подготовка локально:
+
+```bash
+docker login
+docker build -t <dockerhub_username>/delivery-auth-service:latest ./backend/auth-service
+docker build -t <dockerhub_username>/delivery-frontend:latest ./frontend
+docker push <dockerhub_username>/delivery-auth-service:latest
+docker push <dockerhub_username>/delivery-frontend:latest
+```
+
+Подготовка на сервере:
+
+```bash
+cp .env.dockerhub.example .env.dockerhub
+```
+
+Отредактируй `.env.dockerhub`:
+
+```text
+DOCKERHUB_USERNAME=<dockerhub_username>
+IMAGE_TAG=latest
+```
+
+Запуск на сервере из Docker Hub:
+
+```bash
+docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d
+```
+
+Проверка:
+
+```bash
+docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
+```
+
 ## Комментарий по текущему состоянию
 
 - order-service имеет рабочую точку входа в main.go.
-- auth-service пока содержит пустую точку входа в cmd/api/main.go и требует донастройки инициализации БД/роутов.
+- auth-service поднимает API регистрации/логина в cmd/api/main.go.

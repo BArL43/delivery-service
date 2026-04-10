@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: delivery-postgres
+    environment:
+      POSTGRES_DB: delivery
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d delivery"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    image: ${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG:-latest}
+    container_name: delivery-auth-service
+    environment:
+      AUTH_PORT: "8081"
+      AUTH_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
+      JWT_SECRET: dev-secret-change-me
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
+    container_name: delivery-frontend
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: delivery-caddy
+    depends_on:
+      - frontend
+      - auth-service
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+volumes:
+  postgres_data:

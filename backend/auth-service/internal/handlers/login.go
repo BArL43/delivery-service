@@ -10,6 +10,11 @@ import (
 )
 
 func Login(c *gin.Context) {
+	if db == nil {
+		c.JSON(500, gin.H{"error": "База данных не инициализирована"})
+		return
+	}
+
 	var input models.LoginInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(400, gin.H{"error": "Неверные данные или формат"})

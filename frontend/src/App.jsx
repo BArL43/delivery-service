@@ -13,6 +13,8 @@ export default function App() {
   });
   const [touched, setTouched] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState('');
 
   const isRegister = mode === 'register';
 
@@ -57,11 +59,15 @@ export default function App() {
   const handleModeChange = (nextMode) => {
     setMode(nextMode);
     setSubmitted(false);
+    setApiError('');
     setTouched({});
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
+    setApiError('');
+    setSubmitted(false);
+
     setTouched({
       name: true,
       email: true,
@@ -70,8 +76,61 @@ export default function App() {
       confirmPassword: true,
     });
 
-    if (!hasErrors) {
-      setSubmitted(true);
+    if (hasErrors) {
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (isRegister) {
+        const response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            password: form.password,
+            confirmPassword: form.confirmPassword,
+          }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || 'Не удалось зарегистрироваться.');
+        }
+
+        setSubmitted(true);
+      } else {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            login: form.email,
+            password: form.password,
+          }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || 'Не удалось выполнить вход.');
+        }
+
+        if (data.token) {
+          localStorage.setItem('auth_token', data.token);
+        }
+
+        setSubmitted(true);
+      }
+    } catch (error) {
+      setApiError(error.message || 'Произошла ошибка запроса.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -200,9 +259,15 @@ export default function App() {
               )}
             </div>
 
-            <button type="submit" className="submit-btn">
-              {isRegister ? 'Создать аккаунт' : 'Войти'}
+            <button type="submit" className="submit-btn" disabled={loading}>
+              {loading
+                ? 'Отправка...'
+                : isRegister
+                  ? 'Создать аккаунт'
+                  : 'Войти'}
             </button>
+
+            {apiError && <p className="api-error">{apiError}</p>}
 
             {submitted && (
               <p className="success">

@@ -4,3 +4,4 @@
 *.exe
 frontend/node_modules/
 frontend/dist/
+.env.dockerhub

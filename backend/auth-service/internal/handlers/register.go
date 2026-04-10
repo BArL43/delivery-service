@@ -9,7 +9,16 @@ import (
 
 var db *sql.DB
 
+func SetDB(database *sql.DB) {
+	db = database
+}
+
 func Register(c *gin.Context) {
+	if db == nil {
+		c.JSON(500, gin.H{"error": "База данных не инициализирована"})
+		return
+	}
+
 	var input models.RegisterInput
 	err := c.ShouldBindJSON(&input)
 	if err != nil {
