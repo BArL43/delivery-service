@@ -1,11 +1,11 @@
-package repository
+package storage
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
-	"api-gateway/internal/model"
+	"order-service/internal/models"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,7 +20,7 @@ func NewPostgresOrderRepository(pool *pgxpool.Pool) *PostgresOrderRepository {
 	}
 }
 
-func (r *PostgresOrderRepository) Create(ctx context.Context, order model.Order) error {
+func (r *PostgresOrderRepository) Create(ctx context.Context, order models.Order) error {
 	fromJSON, err := json.Marshal(order.FromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to marshal from_address: %w", err)
@@ -52,13 +52,13 @@ func (r *PostgresOrderRepository) Create(ctx context.Context, order model.Order)
 	return nil
 }
 
-func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*model.Order, error) {
+func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*models.Order, error) {
 	query := `
 		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
 		FROM orders
 		WHERE id = $1
 	`
-	var order model.Order
+	var order models.Order
 	var fromJSON, toJSON []byte
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
@@ -85,7 +85,7 @@ func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*mode
 	return &order, nil
 }
 
-func (r *PostgresOrderRepository) List(ctx context.Context) ([]model.Order, error) {
+func (r *PostgresOrderRepository) List(ctx context.Context) ([]models.Order, error) {
 	query := `
 		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
 		FROM orders
@@ -96,9 +96,9 @@ func (r *PostgresOrderRepository) List(ctx context.Context) ([]model.Order, erro
 	}
 	defer rows.Close()
 
-	var orders []model.Order
+	var orders []models.Order
 	for rows.Next() {
-		var order model.Order
+		var order models.Order
 		var fromJSON, toJSON []byte
 
 		err := rows.Scan(

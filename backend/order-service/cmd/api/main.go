@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"api-gateway/internal/handler"
-	"api-gateway/internal/repository"
+	"order-service/internal/handlers"
+	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -32,8 +32,8 @@ func main() {
 	log.Println("Successfully connected to PostgreSQL")
 
 	// 2. Dependency Injection
-	orderRepo := repository.NewPostgresOrderRepository(pool)
-	ordersHandler := handler.NewOrdersHandler(orderRepo)
+	orderRepo := storage.NewPostgresOrderRepository(pool)
+	ordersHandler := handlers.NewOrdersHandler(orderRepo)
 
 	// 3. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
