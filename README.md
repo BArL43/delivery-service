@@ -71,16 +71,16 @@ JWT_SECRET=your-secret-key
 
 Во frontend включен Vite proxy с маршрутом /api -> http://localhost:8081.
 
-## Запуск через Docker Compose + Caddy
+## Запуск через Docker Compose + nginx
 
 В репозиторий добавлены:
 
 - docker-compose.yml
-- Caddyfile
+- nginx.conf
 
 Сценарий:
 
-- Caddy принимает запросы на порту 8080.
+- nginx принимает запросы на порту 80.
 - `/api/*` и `/health` проксируются в auth-service.
 - Все остальные запросы идут во frontend.
 
@@ -93,7 +93,7 @@ docker compose up --build
 После старта приложение доступно по адресу:
 
 ```text
-http://localhost:8080
+http://localhost
 ```
 
 Остановка:

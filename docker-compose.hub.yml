@@ -30,16 +30,14 @@ services:
     image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
     container_name: delivery-frontend
 
-  caddy:
-    image: caddy:2.8-alpine
-    container_name: delivery-caddy
+  nginx:
+    image: ${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG:-latest}
+    container_name: delivery-nginx
     depends_on:
       - frontend
       - auth-service
     ports:
-      - "8080:80"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - "80:80"
 
 volumes:
   postgres_data:
