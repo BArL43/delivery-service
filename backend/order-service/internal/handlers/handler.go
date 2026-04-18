@@ -1,26 +1,26 @@
-package handler
+package handlers
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
 
-	"api-gateway/internal/model"
-	"api-gateway/internal/repository"
+	"order-service/internal/models"
+	"order-service/internal/storage"
 )
 
 type CreateOrderRequest struct {
-	FromAddress model.Address `json:"from_address"`
-	ToAddress   model.Address `json:"to_address"`
+	FromAddress models.Address `json:"from_address"`
+	ToAddress   models.Address `json:"to_address"`
 	Price       float64       `json:"price"`
 	UserID      string        `json:"user_id"`
 }
 
 type OrdersHandler struct {
-	repo repository.OrderRepository
+	repo storage.OrderRepository
 }
 
-func NewOrdersHandler(repo repository.OrderRepository) *OrdersHandler {
+func NewOrdersHandler(repo storage.OrderRepository) *OrdersHandler {
 	return &OrdersHandler{
 		repo: repo,
 	}
@@ -33,7 +33,7 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order := model.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Price)
+	order := models.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Price)
 	if err := h.repo.Create(r.Context(), order); err != nil {
 		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
 		return
