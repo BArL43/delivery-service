@@ -3,6 +3,12 @@ stages:
   - build
   - deploy
 
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+
 variables:
   IMAGE_TAG: latest
 
@@ -42,7 +48,7 @@ build_and_push:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin docker.io
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin docker.io
   script:
     - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG} ./backend/auth-service
     - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG} ./frontend
@@ -50,8 +56,8 @@ build_and_push:
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG}
-  only:
-    - main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 deploy_to_server:
   stage: deploy
@@ -59,10 +65,10 @@ deploy_to_server:
   before_script:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
     - ssh-keyscan -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
   script:
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
-  only:
-    - main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
