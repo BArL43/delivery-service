@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -33,15 +34,23 @@ func NewOrdersHandler(repo storage.OrderRepository, calc *pricing.Calculator) *O
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("CreateOrder: decode error: %v", err)
 		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Generate default user_id if not provided
+	userID := req.UserID
+	if userID == "" {
+		userID = "00000000-0000-0000-0000-000000000000"
 	}
 
 	// Calculate price server-side based on weight and route distance
 	price := h.calc.Calculate(req.DistanceKm, req.Weight)
 
-	order := models.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Weight, price)
+	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.Weight, price)
 	if err := h.repo.Create(r.Context(), order); err != nil {
+		log.Printf("CreateOrder: repo.Create error: %v", err)
 		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
 		return
 	}

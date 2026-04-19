@@ -16,10 +16,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func getEnv(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func main() {
 	ctx := context.Background()
 	// 1. Database Connection
-	connStr := "postgres://postgres:postgres@localhost:45432/postgres?sslmode=disable"
+	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to database: %v\n", err)
@@ -42,7 +50,12 @@ func main() {
 	orderRepo := storage.NewPostgresOrderRepository(pool)
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
 
-	// 4. Routing (using Go 1.22+ enhanced mux)
+	// 4. Courier dependencies
+	courierRepo := storage.NewPostgresCourierRepository(pool)
+	assignmentRepo := storage.NewPostgresAssignmentRepository(pool)
+	courierHandler := handlers.NewCourierHandler(courierRepo, assignmentRepo)
+
+	// 5. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
 
 	// Mapping handlers to endpoints
@@ -50,7 +63,13 @@ func main() {
 	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
 	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
 
-	// 5. Server Setup with Graceful Shutdown
+	// Courier routes
+	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
+	mux.HandleFunc("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
+	mux.HandleFunc("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)
+	mux.HandleFunc("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
+
+	// 6. Server Setup with Graceful Shutdown
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
