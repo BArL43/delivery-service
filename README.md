@@ -141,6 +141,28 @@ docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d
 docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
 ```
 
+## CI/CD
+
+В репозитории есть workflow в `.github/workflows/ci-cd.yml`.
+
+Он делает следующее:
+
+- проверяет `backend/auth-service` и `backend/order-service`;
+- собирает фронтенд;
+- билдит и пушит Docker-образы в Docker Hub;
+- подключается по SSH к серверу и обновляет compose-стек.
+
+Нужные secrets в GitHub:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+- `SSH_HOST`
+- `SSH_USER`
+- `SSH_PORT`
+- `SSH_PRIVATE_KEY`
+
+На сервере должен лежать проект в `/opt/delivery-service` и быть подготовлен файл `.env.dockerhub`.
+
 ## Комментарий по текущему состоянию
 
 - order-service имеет рабочую точку входа в main.go.
