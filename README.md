@@ -143,25 +143,36 @@ docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
 
 ## CI/CD
 
-В репозитории есть workflow в `.github/workflows/ci-cd.yml`.
+В репозитории есть конфиг в `.gitlab-ci.yml`.
 
 Он делает следующее:
 
-- проверяет `backend/auth-service` и `backend/order-service`;
-- собирает фронтенд;
+- тестирует `backend/auth-service` и `backend/order-service`;
+- собирает и проверяет фронтенд;
 - билдит и пушит Docker-образы в Docker Hub;
 - подключается по SSH к серверу и обновляет compose-стек.
 
-Нужные secrets в GitHub:
+### Настройка в GitLab
 
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-- `SSH_HOST`
-- `SSH_USER`
-- `SSH_PORT`
-- `SSH_PRIVATE_KEY`
+В Settings → CI/CD → Variables добавить:
 
-На сервере должен лежать проект в `/opt/delivery-service` и быть подготовлен файл `.env.dockerhub`.
+- `DOCKERHUB_USERNAME` — логин Docker Hub
+- `CI_REGISTRY_USER` — логин Docker Hub (для `docker login`)
+- `CI_REGISTRY_PASSWORD` — access token Docker Hub (не пароль)
+- `SSH_HOST` — IP или домен сервера
+- `SSH_USER` — пользователь на сервере (обычно `root`)
+- `SSH_PORT` — порт SSH (обычно `22`)
+- `SSH_PRIVATE_KEY` — приватный SSH-ключ целиком
+
+### Требования на сервере
+
+- Проект в `/opt/delivery-service`
+- Файл `.env.dockerhub` с переменными:
+  ```
+  DOCKERHUB_USERNAME=<username>
+  IMAGE_TAG=latest
+  ```
+- Docker и Docker Compose установлены
 
 ## Комментарий по текущему состоянию
 

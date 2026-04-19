@@ -1,0 +1,74 @@
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  IMAGE_TAG: latest
+
+test_auth_service:
+  stage: test
+  image: golang:1.26-alpine
+  script:
+    - cd backend/auth-service
+    - go test ./...
+    - go build ./...
+
+test_order_service:
+  stage: test
+  image: golang:1.25-alpine
+  script:
+    - cd backend/order-service
+    - go test ./...
+    - go build ./...
+
+test_frontend:
+  stage: test
+  image: node:20-alpine
+  cache:
+    paths:
+      - frontend/node_modules/
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+
+build_and_push:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin docker.io
+  script:
+    - docker build -t docker.io/$DOCKERHUB_USERNAME/delivery-auth-service:$IMAGE_TAG ./backend/auth-service
+    - docker build -t docker.io/$DOCKERHUB_USERNAME/delivery-frontend:$IMAGE_TAG ./frontend
+    - docker build -t docker.io/$DOCKERHUB_USERNAME/delivery-proxy:$IMAGE_TAG -f Dockerfile.proxy .
+    - docker push docker.io/$DOCKERHUB_USERNAME/delivery-auth-service:$IMAGE_TAG
+    - docker push docker.io/$DOCKERHUB_USERNAME/delivery-frontend:$IMAGE_TAG
+    - docker push docker.io/$DOCKERHUB_USERNAME/delivery-proxy:$IMAGE_TAG
+  only:
+    - main
+
+deploy_to_server:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - ssh-keyscan -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+  script:
+    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST << EOF
+      set -e
+      cd /opt/delivery-service
+      docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull
+      docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans
+      docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
+      EOF
+  only:
+    - main
