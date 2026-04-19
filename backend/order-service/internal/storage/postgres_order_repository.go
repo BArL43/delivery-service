@@ -32,14 +32,15 @@ func (r *PostgresOrderRepository) Create(ctx context.Context, order models.Order
 	}
 
 	query := `
-		INSERT INTO orders (id, user_id, from_address, to_address, price, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO orders (id, user_id, from_address, to_address, weight, price, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 	_, err = r.pool.Exec(ctx, query,
 		order.ID,
 		order.UserID,
 		fromJSON,
 		toJSON,
+		order.Weight,
 		order.Price,
 		order.Status,
 		order.CreatedAt,
@@ -54,7 +55,7 @@ func (r *PostgresOrderRepository) Create(ctx context.Context, order models.Order
 
 func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*models.Order, error) {
 	query := `
-		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
+		SELECT id, user_id, from_address, to_address, weight, price, status, created_at, updated_at
 		FROM orders
 		WHERE id = $1
 	`
@@ -66,6 +67,7 @@ func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*mode
 		&order.UserID,
 		&fromJSON,
 		&toJSON,
+		&order.Weight,
 		&order.Price,
 		&order.Status,
 		&order.CreatedAt,
@@ -87,7 +89,7 @@ func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*mode
 
 func (r *PostgresOrderRepository) List(ctx context.Context) ([]models.Order, error) {
 	query := `
-		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
+		SELECT id, user_id, from_address, to_address, weight, price, status, created_at, updated_at
 		FROM orders
 	`
 	rows, err := r.pool.Query(ctx, query)
@@ -106,6 +108,7 @@ func (r *PostgresOrderRepository) List(ctx context.Context) ([]models.Order, err
 			&order.UserID,
 			&fromJSON,
 			&toJSON,
+			&order.Weight,
 			&order.Price,
 			&order.Status,
 			&order.CreatedAt,
