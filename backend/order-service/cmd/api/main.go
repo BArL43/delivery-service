@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"order-service/internal/handlers"
+	"order-service/internal/pricing"
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,11 +32,17 @@ func main() {
 	}
 	log.Println("Successfully connected to PostgreSQL")
 
-	// 2. Dependency Injection
-	orderRepo := storage.NewPostgresOrderRepository(pool)
-	ordersHandler := handlers.NewOrdersHandler(orderRepo)
+	// 2. Pricing Calculator (from env vars)
+	pricingCfg := pricing.LoadConfig()
+	priceCalc := pricing.NewCalculator(pricingCfg)
+	log.Printf("Pricing config: base=%.0f, per_km=%.0f, per_kg=%.0f",
+		pricingCfg.BaseRate, pricingCfg.PerKmRate, pricingCfg.PerKgRate)
 
-	// 3. Routing (using Go 1.22+ enhanced mux)
+	// 3. Dependency Injection
+	orderRepo := storage.NewPostgresOrderRepository(pool)
+	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
+
+	// 4. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
 
 	// Mapping handlers to endpoints
@@ -43,7 +50,7 @@ func main() {
 	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
 	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
 
-	// 4. Server Setup with Graceful Shutdown
+	// 5. Server Setup with Graceful Shutdown
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,

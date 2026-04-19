@@ -544,3 +544,32 @@ textarea:focus {
     font-size: 30px;
   }
 }
+
+/* Price preview */
+.price-preview {
+  background: linear-gradient(135deg, rgba(37, 112, 198, 0.06), rgba(229, 90, 43, 0.06));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-top: 4px;
+}
+
+.price-preview p {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--text-subtle);
+}
+
+.price-preview p:last-child {
+  margin-bottom: 0;
+}
+
+.price-value {
+  font-size: 18px !important;
+  color: var(--text-main) !important;
+}
+
+.price-value strong {
+  color: var(--accent) !important;
+  font-size: 22px;
+}
