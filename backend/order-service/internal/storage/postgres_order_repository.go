@@ -1,11 +1,11 @@
-package repository
+package storage
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
-	"api-gateway/internal/model"
+	"order-service/internal/models"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,7 +20,7 @@ func NewPostgresOrderRepository(pool *pgxpool.Pool) *PostgresOrderRepository {
 	}
 }
 
-func (r *PostgresOrderRepository) Create(ctx context.Context, order model.Order) error {
+func (r *PostgresOrderRepository) Create(ctx context.Context, order models.Order) error {
 	fromJSON, err := json.Marshal(order.FromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to marshal from_address: %w", err)
@@ -32,14 +32,15 @@ func (r *PostgresOrderRepository) Create(ctx context.Context, order model.Order)
 	}
 
 	query := `
-		INSERT INTO orders (id, user_id, from_address, to_address, price, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO orders (id, user_id, from_address, to_address, weight, price, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 	_, err = r.pool.Exec(ctx, query,
 		order.ID,
 		order.UserID,
 		fromJSON,
 		toJSON,
+		order.Weight,
 		order.Price,
 		order.Status,
 		order.CreatedAt,
@@ -52,13 +53,13 @@ func (r *PostgresOrderRepository) Create(ctx context.Context, order model.Order)
 	return nil
 }
 
-func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*model.Order, error) {
+func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*models.Order, error) {
 	query := `
-		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
+		SELECT id, user_id, from_address, to_address, weight, price, status, created_at, updated_at
 		FROM orders
 		WHERE id = $1
 	`
-	var order model.Order
+	var order models.Order
 	var fromJSON, toJSON []byte
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
@@ -66,6 +67,7 @@ func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*mode
 		&order.UserID,
 		&fromJSON,
 		&toJSON,
+		&order.Weight,
 		&order.Price,
 		&order.Status,
 		&order.CreatedAt,
@@ -85,9 +87,9 @@ func (r *PostgresOrderRepository) GetByID(ctx context.Context, id string) (*mode
 	return &order, nil
 }
 
-func (r *PostgresOrderRepository) List(ctx context.Context) ([]model.Order, error) {
+func (r *PostgresOrderRepository) List(ctx context.Context) ([]models.Order, error) {
 	query := `
-		SELECT id, user_id, from_address, to_address, price, status, created_at, updated_at
+		SELECT id, user_id, from_address, to_address, weight, price, status, created_at, updated_at
 		FROM orders
 	`
 	rows, err := r.pool.Query(ctx, query)
@@ -96,9 +98,9 @@ func (r *PostgresOrderRepository) List(ctx context.Context) ([]model.Order, erro
 	}
 	defer rows.Close()
 
-	var orders []model.Order
+	var orders []models.Order
 	for rows.Next() {
-		var order model.Order
+		var order models.Order
 		var fromJSON, toJSON []byte
 
 		err := rows.Scan(
@@ -106,6 +108,7 @@ func (r *PostgresOrderRepository) List(ctx context.Context) ([]model.Order, erro
 			&order.UserID,
 			&fromJSON,
 			&toJSON,
+			&order.Weight,
 			&order.Price,
 			&order.Status,
 			&order.CreatedAt,

@@ -1,28 +1,32 @@
-package handler
+package handlers
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
 
-	"api-gateway/internal/model"
-	"api-gateway/internal/repository"
+	"order-service/internal/models"
+	"order-service/internal/pricing"
+	"order-service/internal/storage"
 )
 
 type CreateOrderRequest struct {
-	FromAddress model.Address `json:"from_address"`
-	ToAddress   model.Address `json:"to_address"`
-	Price       float64       `json:"price"`
-	UserID      string        `json:"user_id"`
+	FromAddress models.Address `json:"from_address"`
+	ToAddress   models.Address `json:"to_address"`
+	Weight      float64        `json:"weight"`
+	DistanceKm  float64        `json:"distance_km"`
+	UserID      string         `json:"user_id"`
 }
 
 type OrdersHandler struct {
-	repo repository.OrderRepository
+	repo storage.OrderRepository
+	calc *pricing.Calculator
 }
 
-func NewOrdersHandler(repo repository.OrderRepository) *OrdersHandler {
+func NewOrdersHandler(repo storage.OrderRepository, calc *pricing.Calculator) *OrdersHandler {
 	return &OrdersHandler{
 		repo: repo,
+		calc: calc,
 	}
 }
 
@@ -33,7 +37,10 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order := model.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Price)
+	// Calculate price server-side based on weight and route distance
+	price := h.calc.Calculate(req.DistanceKm, req.Weight)
+
+	order := models.NewOrder(req.UserID, req.FromAddress, req.ToAddress, req.Weight, price)
 	if err := h.repo.Create(r.Context(), order); err != nil {
 		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
 		return
