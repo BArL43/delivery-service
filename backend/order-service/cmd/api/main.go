@@ -42,7 +42,12 @@ func main() {
 	orderRepo := storage.NewPostgresOrderRepository(pool)
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
 
-	// 4. Routing (using Go 1.22+ enhanced mux)
+	// 4. Courier dependencies
+	courierRepo := storage.NewPostgresCourierRepository(pool)
+	assignmentRepo := storage.NewPostgresAssignmentRepository(pool)
+	courierHandler := handlers.NewCourierHandler(courierRepo, assignmentRepo)
+
+	// 5. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
 
 	// Mapping handlers to endpoints
@@ -50,7 +55,13 @@ func main() {
 	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
 	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
 
-	// 5. Server Setup with Graceful Shutdown
+	// Courier routes
+	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
+	mux.HandleFunc("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
+	mux.HandleFunc("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)
+	mux.HandleFunc("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
+
+	// 6. Server Setup with Graceful Shutdown
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
