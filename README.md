@@ -74,7 +74,7 @@ JWT_SECRET=your-secret-key
 ## Запуск через Docker Compose + nginx
 
 В репозиторий добавлены:
-
+тест
 - docker-compose.yml
 - nginx.conf
 
