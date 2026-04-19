@@ -16,10 +16,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func getEnv(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func main() {
 	ctx := context.Background()
 	// 1. Database Connection
-	connStr := "postgres://postgres:postgres@localhost:45432/postgres?sslmode=disable"
+	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to database: %v\n", err)
