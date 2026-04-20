@@ -48,7 +48,8 @@ build_and_push:
     - test -n "$DOCKERHUB_USERNAME" || (echo "DOCKERHUB_USERNAME is empty. Set it in GitLab CI/CD Variables." && exit 1)
     - test -n "$DOCKERHUB_TOKEN" || (echo "DOCKERHUB_TOKEN is empty. Set Docker Hub Access Token in GitLab CI/CD Variables." && exit 1)
     - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"$(printf '%s:%s' \"$DOCKERHUB_USERNAME\" \"$DOCKERHUB_TOKEN\" | base64 | tr -d '\\n')\"}}}" > /kaniko/.docker/config.json
+    - export DOCKER_AUTH_BASE64="$(printf '%s:%s' "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n\r')"
+    - printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$DOCKER_AUTH_BASE64" > /kaniko/.docker/config.json
   script:
     - /kaniko/executor --context "$CI_PROJECT_DIR/backend/auth-service" --dockerfile "$CI_PROJECT_DIR/backend/auth-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}" --cache=true
     - /kaniko/executor --context "$CI_PROJECT_DIR/frontend" --dockerfile "$CI_PROJECT_DIR/frontend/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}" --cache=true
