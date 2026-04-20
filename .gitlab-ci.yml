@@ -60,6 +60,8 @@ build_and_push:
 deploy_to_server:
   stage: deploy
   image: alpine:latest
+  tags:
+    - deploy
   retry: 2
   before_script:
     - apk add --no-cache openssh-client netcat-openbsd
