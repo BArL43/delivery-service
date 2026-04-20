@@ -43,7 +43,7 @@ build_and_push:
   stage: build
   image: docker:latest
   services:
-    - docker:latest-dind
+    - docker:dind
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
