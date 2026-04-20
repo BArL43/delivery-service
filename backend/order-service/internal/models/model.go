@@ -7,23 +7,23 @@ import (
 )
 
 type Address struct {
-	City      string
-	Street    string
-	Building  string
-	Apartment string
-	Comment   string
+	City      string `json:"city"`
+	Street    string `json:"street"`
+	Building  string `json:"building"`
+	Apartment string `json:"apartment"`
+	Comment   string `json:"comment"`
 }
 
 type Order struct {
-	ID          string
-	UserID      string
-	FromAddress Address
-	ToAddress   Address
-	Weight      float64
-	Price       float64
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	FromAddress Address   `json:"from_address"`
+	ToAddress   Address   `json:"to_address"`
+	Weight      float64   `json:"weight"`
+	Price       float64   `json:"price"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func NewOrder(userID string, from, to Address, weight, price float64) Order {
