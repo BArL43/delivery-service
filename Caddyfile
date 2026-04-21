@@ -1,9 +1,4 @@
-:80 {
-  redir https://{host}{uri} permanent
-}
-
-:443 {
-  tls internal
+nezy.online, www.nezy.online {
   encode gzip
 
   handle /api/* {
