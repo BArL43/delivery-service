@@ -28,7 +28,9 @@ services:
         condition: service_healthy
 
   order-service:
-    image: ${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend/order-service
+      dockerfile: Dockerfile
     container_name: delivery-order-service
     environment:
       ORDER_PORT: "8080"
@@ -84,7 +86,9 @@ services:
         condition: service_completed_successfully
 
   nginx:
-    image: ${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
     container_name: delivery-nginx
     depends_on:
       - frontend

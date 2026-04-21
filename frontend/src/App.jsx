@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
 
 const STATUS_FLOW = ['Создан', 'Курьер в пути', 'Забран у отправителя', 'Доставлен'];
+const STORAGE_TOKEN_KEY = 'delivery_token';
+const STORAGE_PROFILE_KEY = 'delivery_profile';
 
 // Pricing constants (must match backend defaults)
 const PRICING = {
@@ -70,6 +72,44 @@ function MapClickHandler({ onPick }) {
 }
 
 export default function App() {
+  const [session, setSession] = useState(() => {
+    const token = localStorage.getItem(STORAGE_TOKEN_KEY);
+    const profileRaw = localStorage.getItem(STORAGE_PROFILE_KEY);
+    let profile = { name: '', phone: '', email: '' };
+
+    if (profileRaw) {
+      try {
+        profile = { ...profile, ...JSON.parse(profileRaw) };
+      } catch {
+        profile = { name: '', phone: '', email: '' };
+      }
+    }
+
+    return {
+      token: token || '',
+      profile,
+    };
+  });
+  const [currentView, setCurrentView] = useState(() => (localStorage.getItem(STORAGE_TOKEN_KEY) ? 'order' : 'register'));
+  const [authMode, setAuthMode] = useState('register');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
+  const [authForm, setAuthForm] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    login: '',
+  });
+  const [profileForm, setProfileForm] = useState(() => ({
+    name: session.profile.name || '',
+    phone: session.profile.phone || '',
+    email: session.profile.email || '',
+  }));
+  const [profileNotice, setProfileNotice] = useState('');
+
   const [form, setForm] = useState({
     from: '',
     to: '',
@@ -109,6 +149,137 @@ export default function App() {
     const to = activeOrder?.toCoords || DEFAULT_TO_COORDS;
     return [Number(((from[0] + to[0]) / 2).toFixed(6)), Number(((from[1] + to[1]) / 2).toFixed(6))];
   }, [activeOrder]);
+
+  const updateSession = (nextSession) => {
+    setSession(nextSession);
+
+    if (nextSession.token) {
+      localStorage.setItem(STORAGE_TOKEN_KEY, nextSession.token);
+    } else {
+      localStorage.removeItem(STORAGE_TOKEN_KEY);
+    }
+
+    localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(nextSession.profile || { name: '', phone: '', email: '' }));
+  };
+
+  const handleAuthChange = (event) => {
+    const { name, value } = event.target;
+    setAuthForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileChange = (event) => {
+    const { name, value } = event.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const loginWithCredentials = async (login, password) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(body || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  };
+
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+
+    if (authMode === 'register') {
+      if (!authForm.name.trim() || !authForm.phone.trim() || !authForm.email.trim()) {
+        setAuthError('Заполни имя, телефон и email.');
+        return;
+      }
+      if (authForm.password.length < 8) {
+        setAuthError('Пароль должен быть не короче 8 символов.');
+        return;
+      }
+      if (authForm.password !== authForm.confirmPassword) {
+        setAuthError('Пароли не совпадают.');
+        return;
+      }
+    } else if (!authForm.login.trim() || !authForm.password.trim()) {
+      setAuthError('Введи логин (email/телефон) и пароль.');
+      return;
+    }
+
+    setAuthLoading(true);
+
+    try {
+      if (authMode === 'register') {
+        const registerResponse = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: authForm.name.trim(),
+            phone: authForm.phone.trim(),
+            email: authForm.email.trim(),
+            password: authForm.password,
+            confirmPassword: authForm.confirmPassword,
+          }),
+        });
+
+        if (!registerResponse.ok) {
+          const body = await registerResponse.text();
+          throw new Error(body || `HTTP ${registerResponse.status}`);
+        }
+
+        const loginData = await loginWithCredentials(authForm.email.trim(), authForm.password);
+        const nextProfile = {
+          name: authForm.name.trim(),
+          phone: authForm.phone.trim(),
+          email: authForm.email.trim(),
+        };
+
+        updateSession({ token: loginData.token || '', profile: nextProfile });
+        setProfileForm(nextProfile);
+        setCurrentView('order');
+        setAuthNotice('Регистрация и вход выполнены.');
+      } else {
+        const loginData = await loginWithCredentials(authForm.login.trim(), authForm.password);
+        const nextProfile = {
+          name: session.profile.name || '',
+          phone: session.profile.phone || '',
+          email: authForm.login.includes('@') ? authForm.login.trim() : session.profile.email || '',
+        };
+
+        updateSession({ token: loginData.token || '', profile: nextProfile });
+        setProfileForm(nextProfile);
+        setCurrentView('order');
+        setAuthNotice('Вход выполнен.');
+      }
+    } catch (_error) {
+      setAuthError('Ошибка авторизации. Проверь данные и доступность auth-service.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSaveProfile = (event) => {
+    event.preventDefault();
+
+    const nextProfile = {
+      name: profileForm.name.trim(),
+      phone: profileForm.phone.trim(),
+      email: profileForm.email.trim(),
+    };
+
+    updateSession({ ...session, profile: nextProfile });
+    setProfileNotice('Профиль сохранён.');
+  };
+
+  const handleLogout = () => {
+    updateSession({ token: '', profile: session.profile });
+    setCurrentView('register');
+    setAuthMode('register');
+  };
 
   useEffect(() => {
     if (!activeOrder) {
@@ -412,7 +583,10 @@ export default function App() {
     try {
       const response = await fetch('/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+        },
         body: JSON.stringify(orderPayload),
       });
 
@@ -502,6 +676,99 @@ export default function App() {
     setBanner(`Статус заказа ${activeOrder.id}: ${nextStatus}.`);
   };
 
+  if (currentView === 'register') {
+    return (
+      <main className="page auth-page">
+        <section className="auth-shell">
+          <header className="auth-header">
+            <p className="brand-eyebrow">Delivery Service</p>
+            <h1>{authMode === 'register' ? 'Регистрация клиента' : 'Вход в аккаунт'}</h1>
+            <p>{authMode === 'register' ? 'Сначала создаем профиль, затем сразу попадаем в заказ.' : 'Войди, чтобы открыть панель заказа.'}</p>
+          </header>
+
+          <form className="auth-form" onSubmit={handleAuthSubmit}>
+            {authMode === 'register' ? (
+              <>
+                <label htmlFor="auth-name">Имя</label>
+                <input id="auth-name" name="name" value={authForm.name} onChange={handleAuthChange} placeholder="Илья Гречин" />
+
+                <label htmlFor="auth-phone">Телефон</label>
+                <input id="auth-phone" name="phone" value={authForm.phone} onChange={handleAuthChange} placeholder="+79991234567" />
+
+                <label htmlFor="auth-email">Email</label>
+                <input id="auth-email" name="email" type="email" value={authForm.email} onChange={handleAuthChange} placeholder="mail@example.com" />
+
+                <label htmlFor="auth-password">Пароль</label>
+                <input id="auth-password" name="password" type="password" value={authForm.password} onChange={handleAuthChange} placeholder="Минимум 8 символов" />
+
+                <label htmlFor="auth-confirmPassword">Подтверждение пароля</label>
+                <input id="auth-confirmPassword" name="confirmPassword" type="password" value={authForm.confirmPassword} onChange={handleAuthChange} placeholder="Повтори пароль" />
+              </>
+            ) : (
+              <>
+                <label htmlFor="auth-login">Email или телефон</label>
+                <input id="auth-login" name="login" value={authForm.login} onChange={handleAuthChange} placeholder="mail@example.com или +7999..." />
+
+                <label htmlFor="auth-password-login">Пароль</label>
+                <input id="auth-password-login" name="password" type="password" value={authForm.password} onChange={handleAuthChange} placeholder="Ваш пароль" />
+              </>
+            )}
+
+            <button type="submit" className="submit-btn" disabled={authLoading}>
+              {authLoading ? 'Подождите...' : authMode === 'register' ? 'Зарегистрироваться и войти' : 'Войти'}
+            </button>
+
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                setAuthError('');
+                setAuthNotice('');
+                setAuthMode((prev) => (prev === 'register' ? 'login' : 'register'));
+              }}
+            >
+              {authMode === 'register' ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
+            </button>
+
+            {authError && <p className="api-error">{authError}</p>}
+            {authNotice && <p className="success">{authNotice}</p>}
+          </form>
+        </section>
+      </main>
+    );
+  }
+
+  if (currentView === 'profile') {
+    return (
+      <main className="page auth-page">
+        <section className="auth-shell">
+          <header className="auth-header">
+            <p className="brand-eyebrow">Delivery Service</p>
+            <h1>Профиль пользователя</h1>
+            <p>Обнови свои данные. Они будут подставляться в форму заказа.</p>
+          </header>
+
+          <form className="auth-form" onSubmit={handleSaveProfile}>
+            <label htmlFor="profile-name">Имя</label>
+            <input id="profile-name" name="name" value={profileForm.name} onChange={handleProfileChange} placeholder="Ваше имя" />
+
+            <label htmlFor="profile-phone">Телефон</label>
+            <input id="profile-phone" name="phone" value={profileForm.phone} onChange={handleProfileChange} placeholder="+7999..." />
+
+            <label htmlFor="profile-email">Email</label>
+            <input id="profile-email" name="email" type="email" value={profileForm.email} onChange={handleProfileChange} placeholder="mail@example.com" />
+
+            <button type="submit" className="submit-btn">Сохранить профиль</button>
+            <button type="button" className="submit-btn ghost" onClick={() => setCurrentView('order')}>Вернуться к заказам</button>
+            <button type="button" className="link-btn danger" onClick={handleLogout}>Выйти из аккаунта</button>
+
+            {profileNotice && <p className="success">{profileNotice}</p>}
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="page">
       <section className="dashboard">
@@ -510,10 +777,15 @@ export default function App() {
             <p className="brand-eyebrow">Delivery Service</p>
             <h1>Главная панель заказов</h1>
           </div>
-          <div className="chip-row">
-            <span>Быстрый заказ</span>
-            <span>Онлайн-карта</span>
-            <span>Статусы в реальном времени</span>
+          <div className="topline-right">
+            <div className="chip-row">
+              <span>Быстрый заказ</span>
+              <span>Онлайн-карта</span>
+              <span>Статусы в реальном времени</span>
+            </div>
+            <button type="button" className="profile-btn" onClick={() => setCurrentView('profile')}>
+              Профиль
+            </button>
           </div>
         </header>
 
