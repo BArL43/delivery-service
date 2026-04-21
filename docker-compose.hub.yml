@@ -16,9 +16,7 @@ services:
       retries: 5
 
   auth-service:
-    build:
-      context: ./delivery-service/backend/auth-service
-      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG:-latest}
     container_name: delivery-auth-service
     environment:
       AUTH_PORT: "8081"
@@ -30,9 +28,7 @@ services:
         condition: service_healthy
 
   order-service:
-    build:
-      context: ./backend/order-service
-      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG:-latest}
     container_name: delivery-order-service
     environment:
       ORDER_PORT: "8080"
@@ -45,9 +41,7 @@ services:
         condition: service_healthy
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
     container_name: delivery-frontend
 
   osrm-download:
@@ -90,9 +84,7 @@ services:
         condition: service_completed_successfully
 
   nginx:
-    build:
-      context: .
-      dockerfile: Dockerfile.proxy
+    image: ${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG:-latest}
     container_name: delivery-nginx
     depends_on:
       - frontend
