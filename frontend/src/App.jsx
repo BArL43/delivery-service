@@ -3,6 +3,18 @@ import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents 
 
 const STATUS_FLOW = ['Создан', 'Курьер в пути', 'Забран у отправителя', 'Доставлен'];
 
+// Pricing constants (must match backend defaults)
+const PRICING = {
+  BASE_RATE: 150,
+  PER_KM_RATE: 20,
+  PER_KG_RATE: 50,
+};
+
+const computePrice = (distanceKm, weightKg) => {
+  const distanceBilled = Math.ceil(distanceKm);
+  return Math.round((PRICING.BASE_RATE + distanceBilled * PRICING.PER_KM_RATE + weightKg * PRICING.PER_KG_RATE) * 100) / 100;
+};
+
 const INITIAL_ORDERS = [
   {
     id: 'DLV-24018',
@@ -69,6 +81,7 @@ export default function App() {
     payment: 'card',
     comment: '',
   });
+  const [computedPrice, setComputedPrice] = useState(null);
   const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [activeOrderId, setActiveOrderId] = useState(INITIAL_ORDERS[0].id);
   const [formError, setFormError] = useState('');
@@ -171,6 +184,16 @@ export default function App() {
       controller.abort();
     };
   }, [activeOrder]);
+
+  // Compute price preview when distance and weight change
+  useEffect(() => {
+    if (routeInfo.distanceKm === null) {
+      setComputedPrice(null);
+      return;
+    }
+    const weight = parseFloat(form.weight) || 0;
+    setComputedPrice(computePrice(routeInfo.distanceKm, weight));
+  }, [routeInfo.distanceKm, form.weight]);
 
   const handleMapClick = (nextCoords) => {
     if (!activeOrder) {
@@ -351,7 +374,7 @@ export default function App() {
     return '';
   };
 
-  const handleCreateOrder = (event) => {
+  const handleCreateOrder = async (event) => {
     event.preventDefault();
     setFormError('');
     setBanner('');
@@ -362,29 +385,95 @@ export default function App() {
       return;
     }
 
-    const order = {
-      id: `DLV-${Math.floor(10000 + Math.random() * 89999)}`,
-      from: form.from.trim(),
-      to: form.to.trim(),
-      fromCoords: parseCoords(form.fromCoords) || DEFAULT_FROM_COORDS,
-      toCoords: parseCoords(form.toCoords) || DEFAULT_TO_COORDS,
-      status: 'Создан',
-      eta: `${12 + Math.floor(Math.random() * 20)} мин`,
+    const fromCoords = parseCoords(form.fromCoords) || DEFAULT_FROM_COORDS;
+    const toCoords = parseCoords(form.toCoords) || DEFAULT_TO_COORDS;
+
+    // Build order payload for the backend
+    const orderPayload = {
+      from_address: {
+        city: 'Москва',
+        street: form.from.trim().split(',')[0]?.trim() || form.from.trim(),
+        building: '',
+        apartment: '',
+        comment: form.comment.trim(),
+      },
+      to_address: {
+        city: 'Москва',
+        street: form.to.trim().split(',')[0]?.trim() || form.to.trim(),
+        building: '',
+        apartment: '',
+        comment: '',
+      },
+      weight: parseFloat(form.weight) || 0,
+      distance_km: routeInfo.distanceKm || 0,
+      user_id: '00000000-0000-0000-0000-000000000000',
     };
 
-    setOrders((prev) => [order, ...prev]);
-    setActiveOrderId(order.id);
-    setBanner(`Заказ ${order.id} создан. Курьер назначается.`);
-    setForm((prev) => ({
-      ...prev,
-      from: '',
-      to: '',
-      fromCoords: '',
-      toCoords: '',
-      phone: '',
-      weight: '',
-      comment: '',
-    }));
+    try {
+      const response = await fetch('/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || `HTTP ${response.status}`);
+      }
+
+      const createdOrder = await response.json();
+
+      const order = {
+        id: createdOrder.id || `DLV-${Math.floor(10000 + Math.random() * 89999)}`,
+        from: form.from.trim(),
+        to: form.to.trim(),
+        fromCoords: fromCoords,
+        toCoords: toCoords,
+        status: 'Создан',
+        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+        price: createdOrder.price,
+        weight: createdOrder.weight,
+      };
+
+      setOrders((prev) => [order, ...prev]);
+      setActiveOrderId(order.id);
+      setComputedPrice(null);
+      setBanner(`Заказ ${order.id} создан. Стоимость: ${order.price}₽. Курьер назначается.`);
+      setForm((prev) => ({
+        ...prev,
+        from: '',
+        to: '',
+        fromCoords: '',
+        toCoords: '',
+        phone: '',
+        weight: '',
+        comment: '',
+      }));
+    } catch (error) {
+      // Fallback: create order locally if backend is unavailable
+      const order = {
+        id: `DLV-${Math.floor(10000 + Math.random() * 89999)}`,
+        from: form.from.trim(),
+        to: form.to.trim(),
+        fromCoords: fromCoords,
+        toCoords: toCoords,
+        status: 'Создан',
+        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+      };
+      setOrders((prev) => [order, ...prev]);
+      setActiveOrderId(order.id);
+      setBanner(`Заказ ${order.id} создан (офлайн-режим).`);
+      setForm((prev) => ({
+        ...prev,
+        from: '',
+        to: '',
+        fromCoords: '',
+        toCoords: '',
+        phone: '',
+        weight: '',
+        comment: '',
+      }));
+    }
   };
 
   const simulateStep = () => {
@@ -518,6 +607,20 @@ export default function App() {
                   />
                 </div>
               </div>
+
+              {routeInfo.distanceKm !== null && (
+                <div className="price-preview">
+                  <p>
+                    Дистанция: <strong>{routeInfo.distanceKm} км</strong>
+                    {form.weight && parseFloat(form.weight) > 0
+                      ? ` · Вес: <strong>${form.weight} кг</strong>`
+                      : ''}
+                  </p>
+                  <p className="price-value">
+                    Стоимость доставки: <strong>{computedPrice !== null ? computedPrice + '₽' : 'рассчитывается...'}</strong>
+                  </p>
+                </div>
+              )}
 
               <div className="field-row">
                 <div className="field">
@@ -679,6 +782,19 @@ export default function App() {
                     ? `${routeInfo.durationMin} мин`
                     : '—'}
               </p>
+              {activeOrder?.price && (
+                <p>
+                  <strong>Стоимость:</strong>{' '}
+                  <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                    {activeOrder.price}₽
+                  </span>
+                </p>
+              )}
+              {activeOrder?.weight && (
+                <p>
+                  <strong>Вес:</strong> {activeOrder.weight} кг
+                </p>
+              )}
               {routeInfo.error && <p className="api-error">{routeInfo.error}</p>}
             </div>
           </section>
