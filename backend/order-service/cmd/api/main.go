@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
+	"log/slog"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"order-service/internal/handlers"
+	"order-service/internal/observability"
 	"order-service/internal/pricing"
 	"order-service/internal/storage"
 
@@ -26,25 +27,35 @@ func getEnv(key, fallback string) string {
 
 func main() {
 	ctx := context.Background()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	metrics := observability.NewCollector()
+	observability.SetLogger(logger)
+	observability.SetCollector(metrics)
 	// 1. Database Connection
 	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
-		log.Fatalf("Unable to connect to database: %v\n", err)
+		logger.Error("database_connection_failed", "service", "order-service", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
 	// Verify connection
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("Could not ping database: %v\n", err)
+		logger.Error("database_ping_failed", "service", "order-service", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Successfully connected to PostgreSQL")
+	logger.Info("database_connected", "service", "order-service")
 
 	// 2. Pricing Calculator (from env vars)
 	pricingCfg := pricing.LoadConfig()
 	priceCalc := pricing.NewCalculator(pricingCfg)
-	log.Printf("Pricing config: base=%.0f, per_km=%.0f, per_kg=%.0f",
-		pricingCfg.BaseRate, pricingCfg.PerKmRate, pricingCfg.PerKgRate)
+	logger.Info("pricing_config_loaded",
+		"service", "order-service",
+		"base_rate", pricingCfg.BaseRate,
+		"per_km_rate", pricingCfg.PerKmRate,
+		"per_kg_rate", pricingCfg.PerKgRate,
+	)
 
 	// 3. Dependency Injection
 	orderRepo := storage.NewPostgresOrderRepository(pool)
@@ -57,6 +68,12 @@ func main() {
 
 	// 5. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", observability.Handler())
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	// Mapping handlers to endpoints
 	mux.HandleFunc("POST /orders", ordersHandler.CreateOrder)
@@ -72,7 +89,7 @@ func main() {
 	// 6. Server Setup with Graceful Shutdown
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: mux,
+		Handler: observability.Middleware(mux),
 	}
 
 	// Create a channel to listen for interrupt signals
@@ -81,23 +98,25 @@ func main() {
 
 	// Start the server in a goroutine
 	go func() {
-		log.Printf("Starting API Gateway server on :8080\n")
+		logger.Info("server_starting", "service", "order-service", "addr", ":8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v\n", err)
+			logger.Error("server_failed", "service", "order-service", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	// Wait for interrupt signal
 	<-stop
-	log.Println("Shutting down server...")
+	logger.Info("server_shutdown_start", "service", "order-service")
 
 	// Create a context with timeout for shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		logger.Error("server_shutdown_failed", "service", "order-service", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Server exiting")
+	logger.Info("server_exited", "service", "order-service")
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"order-service/internal/models"
+	"order-service/internal/observability"
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -37,19 +38,27 @@ func (h *CourierHandler) ToggleAvailability(w http.ResponseWriter, r *http.Reque
 		TransportType string `json:"transport_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("courier_availability_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.CourierID == "" {
+		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
 		jsonError(w, http.StatusBadRequest, "courier_id is required")
 		return
 	}
 
 	if err := h.courierRepo.UpdateStatus(r.Context(), req.CourierID, req.IsOnline, req.TransportType); err != nil {
+		observability.Logger().Error("courier_availability_update_failed", "error", err, "courier_id", req.CourierID)
+		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to update availability")
 		return
 	}
+
+	observability.Logger().Info("courier_availability_updated", "courier_id", req.CourierID, "is_online", req.IsOnline, "transport_type", req.TransportType)
+	observability.Stats().ObserveBusiness("courier_availability_update", "success")
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"courier_id":     req.CourierID,
@@ -66,19 +75,27 @@ func (h *CourierHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) 
 		Lon       float64 `json:"lon"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("courier_location_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("courier_location_update", "failure")
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.CourierID == "" {
+		observability.Stats().ObserveBusiness("courier_location_update", "failure")
 		jsonError(w, http.StatusBadRequest, "courier_id is required")
 		return
 	}
 
 	if err := h.courierRepo.UpdateLocation(r.Context(), req.CourierID, req.Lat, req.Lon); err != nil {
+		observability.Logger().Error("courier_location_update_failed", "error", err, "courier_id", req.CourierID)
+		observability.Stats().ObserveBusiness("courier_location_update", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to update location")
 		return
 	}
+
+	observability.Logger().Info("courier_location_updated", "courier_id", req.CourierID, "lat", req.Lat, "lon", req.Lon)
+	observability.Stats().ObserveBusiness("courier_location_update", "success")
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -91,6 +108,7 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 	orderId = strings.TrimSuffix(orderId, "/")
 
 	if orderId == "" {
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusBadRequest, "order_id is required")
 		return
 	}
@@ -100,6 +118,8 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		Mode      string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("courier_assign_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -109,10 +129,13 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "auto" {
 		couriers, err := h.courierRepo.FindAvailable(r.Context())
 		if err != nil {
+			observability.Logger().Error("courier_assign_find_available_failed", "error", err, "order_id", orderId)
+			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusInternalServerError, "failed to find available couriers")
 			return
 		}
 		if len(couriers) == 0 {
+			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusNotFound, "no available couriers")
 			return
 		}
@@ -121,6 +144,7 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		courierID = couriers[0].ID
 	} else {
 		if req.CourierID == "" {
+			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusBadRequest, "courier_id is required for manual mode")
 			return
 		}
@@ -132,15 +156,20 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 	if err := h.assignmentRepo.Create(r.Context(), assignment); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusConflict, "order is already assigned to a courier")
 			return
 		}
+		observability.Logger().Error("courier_assign_create_failed", "error", err, "order_id", orderId, "courier_id", courierID)
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to create assignment")
 		return
 	}
 
 	// Update courier's active order
 	if err := h.courierRepo.SetActiveOrder(r.Context(), courierID, orderId); err != nil {
+		observability.Logger().Error("courier_assign_set_active_failed", "error", err, "order_id", orderId, "courier_id", courierID)
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to set active order")
 		return
 	}
@@ -148,6 +177,8 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 	// Get courier for ETA calculation
 	courier, err := h.courierRepo.GetByID(r.Context(), courierID)
 	if err != nil {
+		observability.Logger().Error("courier_assign_get_courier_failed", "error", err, "order_id", orderId, "courier_id", courierID)
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to get courier")
 		return
 	}
@@ -159,6 +190,9 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		"courier_id": courierID,
 		"eta":        eta,
 	})
+
+	observability.Logger().Info("courier_assigned", "order_id", orderId, "courier_id", courierID, "eta", eta, "mode", req.Mode)
+	observability.Stats().ObserveBusiness("courier_assign", "success")
 }
 
 // GetActiveOrder handles GET /couriers/{courierId}/active-order
@@ -169,15 +203,19 @@ func (h *CourierHandler) GetActiveOrder(w http.ResponseWriter, r *http.Request) 
 	courierId = strings.TrimSuffix(courierId, "/")
 
 	if courierId == "" {
+		observability.Stats().ObserveBusiness("courier_active_order_lookup", "failure")
 		jsonError(w, http.StatusBadRequest, "courier_id is required")
 		return
 	}
 
 	order, err := h.courierRepo.GetActiveCourierOrder(r.Context(), courierId)
 	if err != nil {
+		observability.Stats().ObserveBusiness("courier_active_order_lookup", "failure")
 		jsonError(w, http.StatusNotFound, "no active order for this courier")
 		return
 	}
+
+	observability.Stats().ObserveBusiness("courier_active_order_lookup", "success")
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"order_id":     order.ID,

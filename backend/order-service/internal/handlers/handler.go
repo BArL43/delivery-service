@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
 	"order-service/internal/models"
+	"order-service/internal/observability"
 	"order-service/internal/pricing"
 	"order-service/internal/storage"
 )
@@ -34,7 +34,8 @@ func NewOrdersHandler(repo storage.OrderRepository, calc *pricing.Calculator) *O
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("CreateOrder: decode error: %v", err)
+		observability.Logger().Warn("order_create_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("order_create", "failure")
 		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
 	}
@@ -50,10 +51,20 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.Weight, price)
 	if err := h.repo.Create(r.Context(), order); err != nil {
-		log.Printf("CreateOrder: repo.Create error: %v", err)
+		observability.Logger().Error("order_create_failed", "error", err, "user_id", userID, "price", price)
+		observability.Stats().ObserveBusiness("order_create", "failure")
 		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
 		return
 	}
+
+	observability.Logger().Info("order_created",
+		"order_id", order.ID,
+		"user_id", userID,
+		"price", price,
+		"weight", req.Weight,
+		"distance_km", req.DistanceKm,
+	)
+	observability.Stats().ObserveBusiness("order_create", "success")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

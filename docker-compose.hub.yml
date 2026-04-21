@@ -17,7 +17,7 @@ services:
 
   auth-service:
     build:
-      context: ./backend/auth-service
+      context: ./delivery-service/backend/auth-service
       dockerfile: Dockerfile
     container_name: delivery-auth-service
     environment:

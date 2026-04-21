@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	"projectYandexLyceumFinal/internal/handlers"
+	"projectYandexLyceumFinal/internal/observability"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -24,21 +25,30 @@ func main() {
 	port := getEnv("AUTH_PORT", "8081")
 	osrmBaseURL := getEnv("OSRM_BASE_URL", "http://osrm:5000")
 	geocoderBaseURL := getEnv("GEOCODER_BASE_URL", "https://nominatim.openstreetmap.org")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	metrics := observability.NewCollector()
+	observability.SetLogger(logger)
+	observability.SetCollector(metrics)
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatalf("failed to open db connection: %v", err)
+		logger.Error("database_open_failed", "service", "auth-service", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("failed to ping db: %v", err)
+		logger.Error("database_ping_failed", "service", "auth-service", "error", err)
+		os.Exit(1)
 	}
 
 	handlers.SetDB(db)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(observability.Middleware())
 	r.Use(corsMiddleware())
+	r.GET("/metrics", gin.WrapH(observability.Handler()))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -49,9 +59,10 @@ func main() {
 	r.POST("/api/auth/register", handlers.Register)
 	r.POST("/api/auth/login", handlers.Login)
 
-	log.Printf("auth-service listening on :%s", port)
+	logger.Info("auth_service_listening", "service", "auth-service", "port", port)
 	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("failed to run server: %v", err)
+		logger.Error("server_failed", "service", "auth-service", "error", err)
+		os.Exit(1)
 	}
 
 }
