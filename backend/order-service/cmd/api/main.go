@@ -182,7 +182,7 @@ func ensureCourierSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX IF NOT EXISTS idx_assignments_courier_active
 		ON assignments (courier_id)
 		WHERE status IN ('assigned', 'accepted', 'at_pickup', 'in_progress')`,
-}
+	}
 
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement); err != nil {
