@@ -1,4 +1,4 @@
-package pricing
+package distance
 
 import (
 	"math"
