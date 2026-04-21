@@ -9,36 +9,42 @@ import (
 	"syscall"
 	"time"
 
+	"order-service/internal/geocoder"
 	"order-service/internal/handlers"
 	"order-service/internal/pricing"
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
-
-func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
 
 func main() {
 	ctx := context.Background()
-	// 1. Database Connection
-	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
+
+	// 1. Database Connection (Postgres)
+	connStr := "postgres://postgres:postgres@localhost:45432/postgres?sslmode=disable"
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to database: %v\n", err)
 	}
 	defer pool.Close()
 
-	// Verify connection
 	if err := pool.Ping(ctx); err != nil {
 		log.Fatalf("Could not ping database: %v\n", err)
 	}
 	log.Println("Successfully connected to PostgreSQL")
+
+	// 1.5. Database Connection (Redis)
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Could not ping Redis: %v\n", err)
+	}
+	defer rdb.Close()
+	log.Println("Successfully connected to Redis")
 
 	// 2. Pricing Calculator (from env vars)
 	pricingCfg := pricing.LoadConfig()
@@ -46,30 +52,33 @@ func main() {
 	log.Printf("Pricing config: base=%.0f, per_km=%.0f, per_kg=%.0f",
 		pricingCfg.BaseRate, pricingCfg.PerKmRate, pricingCfg.PerKgRate)
 
-	// 3. Dependency Injection
+	// 3. Dependency Injection (Orders)
 	orderRepo := storage.NewPostgresOrderRepository(pool)
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
 
-	// 4. Courier dependencies
-	courierRepo := storage.NewPostgresCourierRepository(pool)
-	assignmentRepo := storage.NewPostgresAssignmentRepository(pool)
-	courierHandler := handlers.NewCourierHandler(courierRepo, assignmentRepo)
+	// 3.5. Dependency Injection (Geocoder)
+	geoCache := geocoder.NewRedisGeocodeCache(rdb)
+	osmProvider := geocoder.NewOSMProvider()
+	geoService := geocoder.NewService(geoCache, osmProvider, osmProvider)
+	geoHandler := geocoder.NewGeocodeHandler(geoService)
 
-	// 5. Routing (using Go 1.22+ enhanced mux)
+	// 4. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
 
-	// Mapping handlers to endpoints
-	mux.HandleFunc("POST /orders", ordersHandler.CreateOrder)
-	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
-	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
+	// Mapping handlers to endpoints (Orders)
+	// Я добавил префикс /api/v1/ как было в твоем изначальном ТЗ,
+	// если хочешь оставить просто /orders — смело стирай /api/v1
+	mux.HandleFunc("POST /api/v1/orders", ordersHandler.CreateOrder)
+	mux.HandleFunc("GET /api/v1/orders", ordersHandler.ListOrders)
+	mux.HandleFunc("GET /api/v1/orders/{id}", ordersHandler.GetOrder)
+	mux.HandleFunc("PATCH /api/v1/orders/{orderId}/status", ordersHandler.UpdateOrderStatus) // ---> НОВОЕ: Смена статуса
 
-	// Courier routes
-	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
-	mux.HandleFunc("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
-	mux.HandleFunc("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)
-	mux.HandleFunc("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
+	// Mapping handlers to endpoints (Geocoder)
+	mux.HandleFunc("GET /api/v1/geocode", geoHandler.GeocodeAddress)
+	mux.HandleFunc("GET /api/v1/geocode/suggest", geoHandler.Suggest)
+	mux.HandleFunc("POST /api/v1/geocode/reverse", geoHandler.ReverseGeocode)
 
-	// 6. Server Setup with Graceful Shutdown
+	// 5. Server Setup with Graceful Shutdown
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
