@@ -318,7 +318,6 @@ export default function App() {
         }
 
         const registerData = await registerResponse.json();
-        const loginData = await loginWithCredentials(authForm.email.trim(), authForm.password);
         const nextProfile = {
           name: authForm.name.trim(),
           phone: authForm.phone.trim(),
@@ -328,17 +327,27 @@ export default function App() {
           transportType: registerData.transportType || registerData.transport_type || authForm.transportType,
         };
 
-        updateSession({
-          token: loginData.token || '',
-          profile: {
-            ...nextProfile,
-            role: loginData.role || nextProfile.role,
-            courierId: loginData.courier_id || nextProfile.courierId,
-          },
-        });
         setProfileForm(nextProfile);
-        setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
-        setAuthNotice('Регистрация и вход выполнены.');
+
+        try {
+          const loginData = await loginWithCredentials(authForm.email.trim(), authForm.password);
+
+          updateSession({
+            token: loginData.token || '',
+            profile: {
+              ...nextProfile,
+              role: loginData.role || nextProfile.role,
+              courierId: loginData.courier_id || nextProfile.courierId,
+            },
+          });
+          setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
+          setAuthNotice('Регистрация и вход выполнены.');
+        } catch (loginError) {
+          const message = loginError instanceof Error ? loginError.message : 'неизвестная ошибка';
+          setAuthMode('login');
+          setAuthForm((prev) => ({ ...prev, login: authForm.email.trim() }));
+          setAuthError(`Регистрация выполнена, но автологин не удался: ${message}`);
+        }
       } else {
         const loginData = await loginWithCredentials(authForm.login.trim(), authForm.password);
         const nextProfile = {
@@ -355,8 +364,9 @@ export default function App() {
         setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
         setAuthNotice('Вход выполнен.');
       }
-    } catch (_error) {
-      setAuthError('Ошибка авторизации. Проверь данные и доступность auth-service.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Проверь данные и доступность auth-service.';
+      setAuthError(message);
     } finally {
       setAuthLoading(false);
     }
