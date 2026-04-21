@@ -293,11 +293,13 @@ export default function App() {
     const toCoords = activeOrder.toCoords || DEFAULT_TO_COORDS;
     const controller = new AbortController();
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const maxAttempts = 60;
+    const retryDelayMs = 5000;
 
     const loadRoute = async () => {
       setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
 
-      for (let attempt = 1; attempt <= 20; attempt += 1) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
           const query = new URLSearchParams({
             fromLat: String(fromCoords[0]),
@@ -311,7 +313,10 @@ export default function App() {
           );
 
           if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const responseText = await response.text();
+            const routeError = new Error(responseText || `HTTP ${response.status}`);
+            routeError.status = response.status;
+            throw routeError;
           }
 
           const data = await response.json();
@@ -346,17 +351,25 @@ export default function App() {
             return;
           }
 
-          if (attempt < 20) {
-            await sleep(1500);
+          const status = Number(error.status) || 0;
+          const retryable = status === 0 || status >= 500;
+
+          if (attempt < maxAttempts && retryable) {
+            await sleep(retryDelayMs);
             continue;
           }
+
+          const reason = error.message || 'неизвестная ошибка';
+          const fallbackMessage = status === 404
+            ? 'Маршрут не найден для выбранных точек.'
+            : `Маршрут недоступен: ${reason}. Проверь /api/route и контейнеры auth-service + osrm.`;
 
           setRouteInfo({
             loading: false,
             distanceKm: null,
             durationMin: null,
             geometry: [],
-            error: 'Маршрут недоступен. Проверь /api/route и контейнеры auth-service + osrm.',
+            error: fallbackMessage,
           });
         }
       }
