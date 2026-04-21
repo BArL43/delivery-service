@@ -16,7 +16,9 @@ services:
       retries: 5
 
   auth-service:
-    image: ${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
     container_name: delivery-auth-service
     environment:
       AUTH_PORT: "8081"
@@ -43,7 +45,9 @@ services:
         condition: service_healthy
 
   frontend:
-    image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: delivery-frontend
 
   osrm-download:
