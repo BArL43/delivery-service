@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
 
 	"order-service/internal/models"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -104,6 +106,9 @@ func (r *PostgresCourierRepository) GetByEmail(ctx context.Context, email string
 		&courier.UpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to get courier by email: %w", err)
 	}
 
@@ -262,3 +267,4 @@ func (r *PostgresCourierRepository) SetActiveOrder(ctx context.Context, courierI
 	}
 	return nil
 }
+

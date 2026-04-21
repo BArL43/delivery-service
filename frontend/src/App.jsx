@@ -248,6 +248,17 @@ export default function App() {
     setProfileForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const readResponseError = async (response) => {
+    const body = await response.text();
+
+    try {
+      const parsed = JSON.parse(body);
+      return parsed.error || parsed.message || body;
+    } catch {
+      return body;
+    }
+  };
+
   const loginWithCredentials = async (login, password) => {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
@@ -256,7 +267,7 @@ export default function App() {
     });
 
     if (!response.ok) {
-      const body = await response.text();
+      const body = await readResponseError(response);
       throw new Error(body || `HTTP ${response.status}`);
     }
 
@@ -313,7 +324,7 @@ export default function App() {
         });
 
         if (!registerResponse.ok) {
-          const body = await registerResponse.text();
+          const body = await readResponseError(registerResponse);
           throw new Error(body || `HTTP ${registerResponse.status}`);
         }
 
@@ -367,6 +378,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Проверь данные и доступность auth-service.';
       setAuthError(message);
+      setAuthNotice('');
     } finally {
       setAuthLoading(false);
     }
@@ -1181,6 +1193,19 @@ export default function App() {
             <p>{authMode === 'register' ? 'Создай профиль клиента или курьера и сразу попади в нужный экран.' : 'Войди, чтобы открыть свою панель.'}</p>
           </header>
 
+          {authError && (
+            <div className="auth-notification auth-notification-error" role="alert">
+              <strong>Ошибка</strong>
+              <span>{authError}</span>
+            </div>
+          )}
+          {authNotice && (
+            <div className="auth-notification auth-notification-success" role="status">
+              <strong>Готово</strong>
+              <span>{authNotice}</span>
+            </div>
+          )}
+
           <form className="auth-form" onSubmit={handleAuthSubmit}>
             {authMode === 'register' ? (
               <>
@@ -1242,8 +1267,6 @@ export default function App() {
               {authMode === 'register' ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
             </button>
 
-            {authError && <p className="api-error">{authError}</p>}
-            {authNotice && <p className="success">{authNotice}</p>}
           </form>
         </section>
       </main>

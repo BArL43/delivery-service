@@ -13,6 +13,7 @@ import (
 	"order-service/internal/storage"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -57,6 +58,26 @@ func (h *CourierHandler) RegisterCourier(w http.ResponseWriter, r *http.Request)
 	if req.Email == "" || req.FullName == "" || req.Phone == "" {
 		observability.Stats().ObserveBusiness("courier_register", "failure")
 		jsonError(w, http.StatusBadRequest, "email, full_name and phone are required")
+		return
+	}
+
+	if existingCourier, err := h.courierRepo.GetByEmail(r.Context(), req.Email); err == nil {
+		observability.Logger().Info("courier_register_idempotent", "courier_id", existingCourier.ID, "email", existingCourier.Email)
+		observability.Stats().ObserveBusiness("courier_register", "success")
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"courier_id":     existingCourier.ID,
+			"user_id":        existingCourier.UserID,
+			"email":          existingCourier.Email,
+			"full_name":      existingCourier.FullName,
+			"phone":          existingCourier.Phone,
+			"transport_type": existingCourier.TransportType,
+			"is_online":      existingCourier.IsOnline,
+		})
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		observability.Logger().Error("courier_register_lookup_failed", "error", err, "email", req.Email)
+		observability.Stats().ObserveBusiness("courier_register", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to check existing courier profile")
 		return
 	}
 

@@ -541,6 +541,38 @@ textarea:focus {
   animation: rise 0.6s ease;
 }
 
+.auth-notification {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  display: grid;
+  gap: 4px;
+  animation: soft-up 0.35s ease;
+}
+
+.auth-notification strong {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-notification span {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-notification-error {
+  background: rgba(204, 47, 47, 0.1);
+  border: 1px solid rgba(204, 47, 47, 0.18);
+  color: var(--error);
+}
+
+.auth-notification-success {
+  background: rgba(15, 138, 84, 0.12);
+  border: 1px solid rgba(15, 138, 84, 0.18);
+  color: var(--ok);
+}
+
 .auth-header h1 {
   margin: 0;
   font-family: 'Space Grotesk', sans-serif;
