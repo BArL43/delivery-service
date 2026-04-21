@@ -18,7 +18,7 @@ func CheckPasswordHash(password, hash string) bool {
 }
 func IsValidEmail(email string) bool {
 	email = strings.TrimSpace(email)
-	pattern := `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-z]{2,4}$`
+	pattern := `^[a-zA-Z0-9._%+\-']+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,63}$`
 
 	matched, _ := regexp.MatchString(pattern, email)
 	return matched
