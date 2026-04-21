@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -283,72 +284,101 @@ func makeRouteHandler(osrmBaseURL string) gin.HandlerFunc {
 			return
 		}
 
-		baseURL := strings.TrimRight(osrmBaseURL, "/")
-		requestURL := fmt.Sprintf(
-			"%s/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson",
-			baseURL,
-			fromLon,
-			fromLat,
-			toLon,
-			toLat,
-		)
+		candidateBaseURLs := []string{strings.TrimRight(osrmBaseURL, "/"), "https://router.project-osrm.org"}
+		seenBaseURLs := map[string]struct{}{}
 
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, requestURL, nil)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare OSRM request"})
-			return
+		for _, baseURL := range candidateBaseURLs {
+			if baseURL == "" {
+				continue
+			}
+			if _, ok := seenBaseURLs[baseURL]; ok {
+				continue
+			}
+			seenBaseURLs[baseURL] = struct{}{}
+
+			route, err := fetchRouteFromOSRM(c.Request.Context(), client, baseURL, fromLat, fromLon, toLat, toLon)
+			if err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"distance": route.Distance,
+					"duration": route.Duration,
+					"geometry": route.Geometry,
+				})
+				return
+			}
+
+			observability.Logger().Warn("route_osrm_candidate_failed", "base_url", baseURL, "error", err)
 		}
 
-		resp, err := client.Do(req)
-		if err != nil {
-			observability.Logger().Warn("route_osrm_unavailable", "error", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to call OSRM"})
-			return
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			observability.Logger().Warn("route_osrm_read_failed", "error", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read OSRM response"})
-			return
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			observability.Logger().Warn("route_osrm_status_not_ok", "status", resp.StatusCode, "details", string(body))
-			c.JSON(http.StatusBadGateway, gin.H{"error": "OSRM returned an error", "details": string(body)})
-			return
-		}
-
-		var osrmResp struct {
-			Routes []struct {
-				Distance float64 `json:"distance"`
-				Duration float64 `json:"duration"`
-				Geometry struct {
-					Coordinates [][]float64 `json:"coordinates"`
-				} `json:"geometry"`
-			} `json:"routes"`
-		}
-
-		if err := json.Unmarshal(body, &osrmResp); err != nil {
-			observability.Logger().Warn("route_osrm_parse_failed", "error", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to parse OSRM response"})
-			return
-		}
-
-		if len(osrmResp.Routes) == 0 {
-			observability.Logger().Warn("route_osrm_empty_routes")
-			c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
-			return
-		}
-
-		route := osrmResp.Routes[0]
-		c.JSON(http.StatusOK, gin.H{
-			"distance": route.Distance,
-			"duration": route.Duration,
-			"geometry": route.Geometry,
-		})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to call OSRM"})
 	}
+}
+
+func fetchRouteFromOSRM(ctx context.Context, client *http.Client, baseURL string, fromLat, fromLon, toLat, toLon float64) (*struct {
+	Distance float64
+	Duration float64
+	Geometry struct {
+		Coordinates [][]float64 `json:"coordinates"`
+	}
+}, error) {
+	requestURL := fmt.Sprintf(
+		"%s/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson",
+		baseURL,
+		fromLon,
+		fromLat,
+		toLon,
+		toLat,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OSRM returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var osrmResp struct {
+		Routes []struct {
+			Distance float64 `json:"distance"`
+			Duration float64 `json:"duration"`
+			Geometry struct {
+				Coordinates [][]float64 `json:"coordinates"`
+			} `json:"geometry"`
+		} `json:"routes"`
+	}
+
+	if err := json.Unmarshal(body, &osrmResp); err != nil {
+		return nil, err
+	}
+
+	if len(osrmResp.Routes) == 0 {
+		return nil, fmt.Errorf("route not found")
+	}
+
+	route := osrmResp.Routes[0]
+	return &struct {
+		Distance float64
+		Duration float64
+		Geometry struct {
+			Coordinates [][]float64 `json:"coordinates"`
+		}
+	}{
+		Distance: route.Distance,
+		Duration: route.Duration,
+		Geometry: route.Geometry,
+	}, nil
 }
 
 func parseFloatQuery(c *gin.Context, key string) (float64, error) {
