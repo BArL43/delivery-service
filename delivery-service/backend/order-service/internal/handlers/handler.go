@@ -59,8 +59,8 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	resp := models.OrderResponse{
 		OrderId:           order.ID,
 		InitialStatus:     order.Status,
-		EstimatedDistance: distance,
-		EstimatedDuration: time.Duration(distance / 15 * float64(time.Hour)),
+		EstimatedDistance: dist,
+		EstimatedDuration: time.Duration(dist / 15 * float64(time.Hour)),
 		EstimatedPrice:    price,
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -91,8 +91,8 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	resp := models.OrderResponse{
 		OrderId:           order.ID,
 		InitialStatus:     order.Status,
-		EstimatedDistance: pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
-		EstimatedDuration: time.Duration(pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
+		EstimatedDistance: distance.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
+		EstimatedDuration: time.Duration(distance.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
 		EstimatedPrice:    order.Price,
 	}
 
@@ -133,8 +133,8 @@ func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		items = append(items, models.OrderResponse{
 			OrderId:           order.ID,
 			InitialStatus:     order.Status,
-			EstimatedDistance: pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
-			EstimatedDuration: time.Duration(pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
+			EstimatedDistance: distance.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
+			EstimatedDuration: time.Duration(distance.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
 			EstimatedPrice:    order.Price,
 		})
 	}
