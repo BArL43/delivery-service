@@ -69,6 +69,9 @@ func Register(c *gin.Context) {
 	if role == "courier" {
 		courierID, err = registerCourierProfile(c.Request.Context(), input)
 		if err != nil {
+			if _, rollbackErr := db.Exec(`DELETE FROM users WHERE id = $1`, newUser.Id); rollbackErr != nil {
+				observability.Logger().Error("auth_register_rollback_failed", "error", rollbackErr, "user_id", newUser.Id, "email", input.Email)
+			}
 			observability.Logger().Error("auth_register_courier_sync_failed", "error", err, "email", input.Email)
 			observability.Stats().ObserveBusiness("register", "failure")
 			c.JSON(502, gin.H{"error": fmt.Sprintf("Не удалось создать профиль курьера: %v", err)})
