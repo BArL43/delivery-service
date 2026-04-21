@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -301,19 +302,22 @@ func makeRouteHandler(osrmBaseURL string) gin.HandlerFunc {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to call OSRM"})
+			observability.Logger().Warn("route_osrm_unavailable", "error", err)
+			c.JSON(http.StatusOK, fallbackRoute(fromLat, fromLon, toLat, toLon))
 			return
 		}
 		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read OSRM response"})
+			observability.Logger().Warn("route_osrm_read_failed", "error", err)
+			c.JSON(http.StatusOK, fallbackRoute(fromLat, fromLon, toLat, toLon))
 			return
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "OSRM returned an error", "details": string(body)})
+			observability.Logger().Warn("route_osrm_status_not_ok", "status", resp.StatusCode, "details", string(body))
+			c.JSON(http.StatusOK, fallbackRoute(fromLat, fromLon, toLat, toLon))
 			return
 		}
 
@@ -328,12 +332,14 @@ func makeRouteHandler(osrmBaseURL string) gin.HandlerFunc {
 		}
 
 		if err := json.Unmarshal(body, &osrmResp); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to parse OSRM response"})
+			observability.Logger().Warn("route_osrm_parse_failed", "error", err)
+			c.JSON(http.StatusOK, fallbackRoute(fromLat, fromLon, toLat, toLon))
 			return
 		}
 
 		if len(osrmResp.Routes) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
+			observability.Logger().Warn("route_osrm_empty_routes")
+			c.JSON(http.StatusOK, fallbackRoute(fromLat, fromLon, toLat, toLon))
 			return
 		}
 
@@ -344,6 +350,35 @@ func makeRouteHandler(osrmBaseURL string) gin.HandlerFunc {
 			"geometry": route.Geometry,
 		})
 	}
+}
+
+func fallbackRoute(fromLat, fromLon, toLat, toLon float64) gin.H {
+	distanceMeters := haversineMeters(fromLat, fromLon, toLat, toLon)
+	durationSeconds := math.Max(60, distanceMeters/1000/40*3600)
+
+	return gin.H{
+		"distance": distanceMeters,
+		"duration": durationSeconds,
+		"geometry": gin.H{
+			"coordinates": [][]float64{
+				{fromLon, fromLat},
+				{toLon, toLat},
+			},
+		},
+	}
+}
+
+func haversineMeters(fromLat, fromLon, toLat, toLon float64) float64 {
+	const earthRadiusMeters = 6371000.0
+	lat1 := fromLat * math.Pi / 180
+	lat2 := toLat * math.Pi / 180
+	dLat := (toLat - fromLat) * math.Pi / 180
+	dLon := (toLon - fromLon) * math.Pi / 180
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusMeters * c
 }
 
 func parseFloatQuery(c *gin.Context, key string) (float64, error) {

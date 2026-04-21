@@ -144,6 +144,9 @@ export default function App() {
   );
 
   const activeStep = STATUS_FLOW.indexOf(activeOrder?.status || STATUS_FLOW[0]);
+  const completedOrders = orders.filter((order) => order.status === 'Доставлен').length;
+  const inProgressOrders = orders.filter((order) => order.status !== 'Доставлен').length;
+  const recentOrders = orders.slice(0, 3);
   const mapCenter = useMemo(() => {
     const from = activeOrder?.fromCoords || DEFAULT_FROM_COORDS;
     const to = activeOrder?.toCoords || DEFAULT_TO_COORDS;
@@ -740,30 +743,127 @@ export default function App() {
 
   if (currentView === 'profile') {
     return (
-      <main className="page auth-page">
-        <section className="auth-shell">
-          <header className="auth-header">
-            <p className="brand-eyebrow">Delivery Service</p>
-            <h1>Профиль пользователя</h1>
-            <p>Обнови свои данные. Они будут подставляться в форму заказа.</p>
+      <main className="page">
+        <section className="dashboard profile-dashboard">
+          <header className="topline profile-topline">
+            <div>
+              <p className="brand-eyebrow">Delivery Service</p>
+              <h1>Профиль пользователя</h1>
+              <p className="profile-lead">Здесь можно быстро обновить данные, посмотреть активность и вернуться к заказам.</p>
+            </div>
+            <div className="topline-right">
+              <div className="chip-row">
+                <span>{orders.length} заказов</span>
+                <span>{inProgressOrders} в работе</span>
+                <span>{completedOrders} доставлено</span>
+              </div>
+              <div className="profile-actions">
+                <button type="button" className="profile-btn" onClick={() => setCurrentView('order')}>
+                  К заказам
+                </button>
+                <button type="button" className="profile-btn ghost-btn" onClick={handleLogout}>
+                  Выйти
+                </button>
+              </div>
+            </div>
           </header>
 
-          <form className="auth-form" onSubmit={handleSaveProfile}>
-            <label htmlFor="profile-name">Имя</label>
-            <input id="profile-name" name="name" value={profileForm.name} onChange={handleProfileChange} placeholder="Ваше имя" />
+          <div className="profile-grid">
+            <article className="profile-summary card-shell">
+              <div className="profile-avatar">
+                <span>{(profileForm.name || session.profile.name || 'П').trim().charAt(0).toUpperCase()}</span>
+              </div>
+              <div>
+                <p className="brand-eyebrow">Аккаунт</p>
+                <h2>{profileForm.name || 'Профиль без имени'}</h2>
+                <p className="profile-muted">{profileForm.email || 'email не указан'}</p>
+              </div>
 
-            <label htmlFor="profile-phone">Телефон</label>
-            <input id="profile-phone" name="phone" value={profileForm.phone} onChange={handleProfileChange} placeholder="+7999..." />
+              <div className="profile-stats">
+                <div className="stat-card">
+                  <strong>{orders.length}</strong>
+                  <span>Всего заказов</span>
+                </div>
+                <div className="stat-card">
+                  <strong>{activeOrder ? 1 : 0}</strong>
+                  <span>Активный заказ</span>
+                </div>
+                <div className="stat-card">
+                  <strong>{completedOrders}</strong>
+                  <span>Доставлено</span>
+                </div>
+              </div>
 
-            <label htmlFor="profile-email">Email</label>
-            <input id="profile-email" name="email" type="email" value={profileForm.email} onChange={handleProfileChange} placeholder="mail@example.com" />
+              {activeOrder && (
+                <div className="profile-spotlight">
+                  <p className="brand-eyebrow">Последний выбранный заказ</p>
+                  <strong>{activeOrder.id}</strong>
+                  <span>{activeOrder.from} → {activeOrder.to}</span>
+                </div>
+              )}
+            </article>
 
-            <button type="submit" className="submit-btn">Сохранить профиль</button>
-            <button type="button" className="submit-btn ghost" onClick={() => setCurrentView('order')}>Вернуться к заказам</button>
-            <button type="button" className="link-btn danger" onClick={handleLogout}>Выйти из аккаунта</button>
+            <article className="profile-form-card card-shell">
+              <h2>Данные профиля</h2>
+              <p className="panel-caption">Эти данные подставляются в новые заказы и сохраняются в браузере.</p>
 
-            {profileNotice && <p className="success">{profileNotice}</p>}
-          </form>
+              <form className="profile-form" onSubmit={handleSaveProfile}>
+                <div className="field-row">
+                  <div className="field">
+                    <label htmlFor="profile-name">Имя</label>
+                    <input id="profile-name" name="name" value={profileForm.name} onChange={handleProfileChange} placeholder="Ваше имя" />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="profile-phone">Телефон</label>
+                    <input id="profile-phone" name="phone" value={profileForm.phone} onChange={handleProfileChange} placeholder="+7999..." />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="profile-email">Email</label>
+                  <input id="profile-email" name="email" type="email" value={profileForm.email} onChange={handleProfileChange} placeholder="mail@example.com" />
+                </div>
+
+                <div className="profile-actions stacked">
+                  <button type="submit" className="submit-btn">Сохранить профиль</button>
+                  <button type="button" className="submit-btn ghost" onClick={() => setCurrentView('order')}>Вернуться к заказам</button>
+                </div>
+
+                {profileNotice && <p className="success">{profileNotice}</p>}
+              </form>
+            </article>
+
+            <article className="profile-orders card-shell">
+              <div className="section-heading">
+                <div>
+                  <p className="brand-eyebrow">Недавние заказы</p>
+                  <h2>Последние доставки</h2>
+                </div>
+                <button type="button" className="link-btn" onClick={() => setCurrentView('order')}>
+                  Открыть панель заказов
+                </button>
+              </div>
+
+              <ul className="orders-list compact">
+                {recentOrders.map((order) => (
+                  <li key={`profile-${order.id}`}>
+                    <button type="button" className="order-item compact-item" onClick={() => { setActiveOrderId(order.id); setCurrentView('order'); }}>
+                      <div>
+                        <strong>{order.id}</strong>
+                        <p>{order.from}</p>
+                        <p>{order.to}</p>
+                      </div>
+                      <div className="order-aside">
+                        <span>{order.status}</span>
+                        <small>{order.eta}</small>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
         </section>
       </main>
     );
@@ -775,13 +875,14 @@ export default function App() {
         <header className="topline">
           <div>
             <p className="brand-eyebrow">Delivery Service</p>
-            <h1>Главная панель заказов</h1>
+            <h1>Заказы и доставка</h1>
+            <p className="profile-lead">Список заказов, создание новой доставки и карта маршрута в одном экране.</p>
           </div>
           <div className="topline-right">
             <div className="chip-row">
-              <span>Быстрый заказ</span>
+              <span>{orders.length} заказов</span>
+              <span>{inProgressOrders} в работе</span>
               <span>Онлайн-карта</span>
-              <span>Статусы в реальном времени</span>
             </div>
             <button type="button" className="profile-btn" onClick={() => setCurrentView('profile')}>
               Профиль
@@ -821,6 +922,7 @@ export default function App() {
                     ))}
                   </ul>
                 )}
+                <p className="field-hint">Координаты точки A определяются автоматически.</p>
               </div>
 
               <div className="field">
@@ -851,6 +953,7 @@ export default function App() {
                     ))}
                   </ul>
                 )}
+                <p className="field-hint">Координаты точки B определяются автоматически.</p>
               </div>
 
               <div className="field-row">
@@ -893,31 +996,6 @@ export default function App() {
                   </p>
                 </div>
               )}
-
-              <div className="field-row">
-                <div className="field">
-                  <label htmlFor="fromCoords">Координаты точки A (lat,lon)</label>
-                  <input
-                    id="fromCoords"
-                    name="fromCoords"
-                    type="text"
-                    placeholder="55.7558,37.6176"
-                    value={form.fromCoords}
-                    onChange={handleChange}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="toCoords">Координаты точки B (lat,lon)</label>
-                  <input
-                    id="toCoords"
-                    name="toCoords"
-                    type="text"
-                    placeholder="55.7060,37.5895"
-                    value={form.toCoords}
-                    onChange={handleChange}
-                  />
-                </div>
-              </div>
 
               <div className="field-row">
                 <div className="field">
