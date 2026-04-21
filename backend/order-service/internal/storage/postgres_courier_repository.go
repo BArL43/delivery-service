@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"errors"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"order-service/internal/models"
@@ -267,4 +267,3 @@ func (r *PostgresCourierRepository) SetActiveOrder(ctx context.Context, courierI
 	}
 	return nil
 }
-
