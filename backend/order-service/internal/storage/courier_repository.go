@@ -8,6 +8,7 @@ import (
 type CourierRepository interface {
 	Create(ctx context.Context, courier models.Courier) error
 	GetByID(ctx context.Context, id string) (*models.Courier, error)
+	GetByEmail(ctx context.Context, email string) (*models.Courier, error)
 	UpdateStatus(ctx context.Context, id string, isOnline bool, transportType string) error
 	UpdateLocation(ctx context.Context, id string, lat, lon float64) error
 	GetActiveCourierOrder(ctx context.Context, courierID string) (*models.Order, error)

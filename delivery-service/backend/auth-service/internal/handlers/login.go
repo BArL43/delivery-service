@@ -31,11 +31,11 @@ func Login(c *gin.Context) {
 	var err error
 
 	if strings.Contains(input.Login, "@") {
-		query = `SELECT id, password_hash, role FROM users WHERE email = $1`
+		query = `SELECT id, password_hash, role, email FROM users WHERE email = $1`
 	} else {
-		query = `SELECT id, password_hash, role FROM users WHERE phone = $1`
+		query = `SELECT id, password_hash, role, email FROM users WHERE phone = $1`
 	}
-	err = db.QueryRow(query, input.Login).Scan(&user.Id, &user.PasswordHash, &user.Role)
+	err = db.QueryRow(query, input.Login).Scan(&user.Id, &user.PasswordHash, &user.Role, &user.Email)
 	if err != nil {
 		observability.Logger().Warn("auth_login_invalid_credentials", "login", input.Login)
 		observability.Stats().ObserveBusiness("login", "failure")
@@ -58,12 +58,25 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	courierID := ""
+	if user.Role == "courier" {
+		if resolvedCourierID, lookupErr := lookupCourierIDByEmail(c.Request.Context(), user.Email); lookupErr == nil {
+			courierID = resolvedCourierID
+		} else {
+			observability.Logger().Warn("auth_login_courier_lookup_failed", "error", lookupErr, "email", user.Email)
+		}
+	}
+
 	observability.Logger().Info("auth_login_success", "user_id", user.Id, "role", user.Role, "login_type", loginType(input.Login))
 	observability.Stats().ObserveBusiness("login", "success")
 
 	c.JSON(200, gin.H{
-		"message": "Успешный вход",
-		"token":   token,
+		"message":    "Успешный вход",
+		"token":      token,
+		"role":       user.Role,
+		"user_id":    user.Id,
+		"email":      user.Email,
+		"courier_id": courierID,
 	})
 }
 

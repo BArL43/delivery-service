@@ -1,4 +1,8 @@
-:80, :443 {
+:80 {
+  redir https://{host}{uri} permanent
+}
+
+:443 {
   tls internal
   encode gzip
 

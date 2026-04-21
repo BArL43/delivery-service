@@ -81,6 +81,8 @@ func main() {
 	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
 
 	// Courier routes
+	mux.HandleFunc("POST /api/v1/couriers/register", courierHandler.RegisterCourier)
+	mux.HandleFunc("GET /api/v1/couriers/by-email", courierHandler.GetCourierByEmail)
 	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
 	mux.HandleFunc("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
 	mux.HandleFunc("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)

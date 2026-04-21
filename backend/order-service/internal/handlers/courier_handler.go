@@ -13,6 +13,7 @@ import (
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/google/uuid"
 )
 
 type CourierHandler struct {
@@ -28,6 +29,87 @@ func NewCourierHandler(
 		courierRepo:    courierRepo,
 		assignmentRepo: assignmentRepo,
 	}
+}
+
+// RegisterCourier handles POST /api/v1/couriers/register
+func (h *CourierHandler) RegisterCourier(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email         string `json:"email"`
+		FullName      string `json:"full_name"`
+		Phone         string `json:"phone"`
+		TransportType string `json:"transport_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("courier_register_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("courier_register", "failure")
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Email = strings.TrimSpace(req.Email)
+	req.FullName = strings.TrimSpace(req.FullName)
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.TransportType = strings.TrimSpace(req.TransportType)
+	if req.TransportType == "" {
+		req.TransportType = "bicycle"
+	}
+
+	if req.Email == "" || req.FullName == "" || req.Phone == "" {
+		observability.Stats().ObserveBusiness("courier_register", "failure")
+		jsonError(w, http.StatusBadRequest, "email, full_name and phone are required")
+		return
+	}
+
+	courier := models.NewCourier(uuid.NewString(), req.Email, req.FullName, req.Phone, req.TransportType)
+	if err := h.courierRepo.Create(r.Context(), courier); err != nil {
+		observability.Logger().Error("courier_register_create_failed", "error", err, "email", req.Email)
+		observability.Stats().ObserveBusiness("courier_register", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to create courier profile")
+		return
+	}
+
+	observability.Logger().Info("courier_registered", "courier_id", courier.ID, "email", courier.Email, "transport_type", courier.TransportType)
+	observability.Stats().ObserveBusiness("courier_register", "success")
+
+	jsonResponse(w, http.StatusCreated, map[string]interface{}{
+		"courier_id":     courier.ID,
+		"user_id":        courier.UserID,
+		"email":          courier.Email,
+		"full_name":      courier.FullName,
+		"phone":          courier.Phone,
+		"transport_type": courier.TransportType,
+		"is_online":      courier.IsOnline,
+	})
+}
+
+// GetCourierByEmail handles GET /api/v1/couriers/by-email?email=...
+func (h *CourierHandler) GetCourierByEmail(w http.ResponseWriter, r *http.Request) {
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	if email == "" {
+		observability.Stats().ObserveBusiness("courier_lookup", "failure")
+		jsonError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+
+	courier, err := h.courierRepo.GetByEmail(r.Context(), email)
+	if err != nil {
+		observability.Logger().Warn("courier_lookup_failed", "error", err, "email", email)
+		observability.Stats().ObserveBusiness("courier_lookup", "failure")
+		jsonError(w, http.StatusNotFound, "courier not found")
+		return
+	}
+
+	observability.Stats().ObserveBusiness("courier_lookup", "success")
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"courier_id":     courier.ID,
+		"user_id":        courier.UserID,
+		"email":          courier.Email,
+		"full_name":      courier.FullName,
+		"phone":          courier.Phone,
+		"transport_type": courier.TransportType,
+		"is_online":      courier.IsOnline,
+		"active_order_id": courier.ActiveOrderID,
+	})
 }
 
 // ToggleAvailability handles POST /couriers/availability

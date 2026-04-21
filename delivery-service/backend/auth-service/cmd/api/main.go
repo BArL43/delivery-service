@@ -25,6 +25,7 @@ func main() {
 	dsn := getEnv("AUTH_DB_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	port := getEnv("AUTH_PORT", "8081")
 	osrmBaseURL := getEnv("OSRM_BASE_URL", "http://osrm:5000")
+	orderServiceURL := getEnv("ORDER_SERVICE_URL", "http://order-service:8080")
 	geocoderBaseURL := getEnv("GEOCODER_BASE_URL", "https://nominatim.openstreetmap.org")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	metrics := observability.NewCollector()
@@ -44,6 +45,7 @@ func main() {
 	}
 
 	handlers.SetDB(db)
+	handlers.SetOrderServiceURL(orderServiceURL)
 
 	r := gin.New()
 	r.Use(gin.Recovery())

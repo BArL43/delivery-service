@@ -78,6 +78,42 @@ func (r *PostgresCourierRepository) GetByID(ctx context.Context, id string) (*mo
 	return &courier, nil
 }
 
+func (r *PostgresCourierRepository) GetByEmail(ctx context.Context, email string) (*models.Courier, error) {
+	query := `
+		SELECT id, user_id, email, full_name, phone, transport_type, is_online,
+		       active_order_id, current_lat, current_lon, created_at, updated_at
+		FROM couriers
+		WHERE email = $1
+	`
+	var courier models.Courier
+	var activeOrderID *string
+	var currentLat, currentLon *float64
+
+	err := r.pool.QueryRow(ctx, query, email).Scan(
+		&courier.ID,
+		&courier.UserID,
+		&courier.Email,
+		&courier.FullName,
+		&courier.Phone,
+		&courier.TransportType,
+		&courier.IsOnline,
+		&activeOrderID,
+		&currentLat,
+		&currentLon,
+		&courier.CreatedAt,
+		&courier.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get courier by email: %w", err)
+	}
+
+	courier.ActiveOrderID = activeOrderID
+	courier.CurrentLat = currentLat
+	courier.CurrentLon = currentLon
+
+	return &courier, nil
+}
+
 func (r *PostgresCourierRepository) UpdateStatus(ctx context.Context, id string, isOnline bool, transportType string) error {
 	query := `
 		UPDATE couriers

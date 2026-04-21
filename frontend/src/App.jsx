@@ -4,6 +4,7 @@ import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents 
 const STATUS_FLOW = ['Создан', 'Курьер в пути', 'Забран у отправителя', 'Доставлен'];
 const STORAGE_TOKEN_KEY = 'delivery_token';
 const STORAGE_PROFILE_KEY = 'delivery_profile';
+const STORAGE_COURIER_ACCEPTED_KEY = 'delivery_courier_accepted_orders';
 
 // Pricing constants (must match backend defaults)
 const PRICING = {
@@ -40,6 +41,21 @@ const INITIAL_ORDERS = [
 
 const DEFAULT_FROM_COORDS = [55.7558, 37.6176];
 const DEFAULT_TO_COORDS = [55.706, 37.5895];
+const ORDER_STATUS_LABELS = {
+  created: 'Ожидает курьера',
+  SEARCHING_COURIER: 'Ищем курьера',
+  COURIER_ASSIGNED: 'Курьер назначен',
+  PICKED_UP: 'Забран',
+  DELIVERED: 'Доставлен',
+  cancelled: 'Отменён',
+  Создан: 'Создан',
+  'Курьер в пути': 'Курьер в пути',
+  'Забран у отправителя': 'Забран у отправителя',
+  'Доставлен': 'Доставлен',
+};
+
+const formatOrderStatus = (status) => ORDER_STATUS_LABELS[status] || status || '—';
+
 const parseCoords = (value) => {
   const normalized = value.trim().replace(';', ',');
   const parts = normalized.split(',').map((chunk) => chunk.trim());
@@ -61,6 +77,17 @@ const parseCoords = (value) => {
 
 const routeToEta = (seconds) => `${Math.max(1, Math.round(seconds / 60))} мин`;
 
+const buildAddressLabel = (address) => {
+  if (!address) {
+    return '';
+  }
+
+  return [address.city, address.street, address.building, address.apartment]
+    .filter((part) => part && String(part).trim())
+    .map((part) => String(part).trim())
+    .join(', ');
+};
+
 function MapClickHandler({ onPick }) {
   useMapEvents({
     click(event) {
@@ -75,13 +102,13 @@ export default function App() {
   const [session, setSession] = useState(() => {
     const token = localStorage.getItem(STORAGE_TOKEN_KEY);
     const profileRaw = localStorage.getItem(STORAGE_PROFILE_KEY);
-    let profile = { name: '', phone: '', email: '' };
+    let profile = { name: '', phone: '', email: '', role: 'client', courierId: '', transportType: 'bicycle' };
 
     if (profileRaw) {
       try {
         profile = { ...profile, ...JSON.parse(profileRaw) };
       } catch {
-        profile = { name: '', phone: '', email: '' };
+        profile = { name: '', phone: '', email: '', role: 'client', courierId: '', transportType: 'bicycle' };
       }
     }
 
@@ -90,7 +117,24 @@ export default function App() {
       profile,
     };
   });
-  const [currentView, setCurrentView] = useState(() => (localStorage.getItem(STORAGE_TOKEN_KEY) ? 'order' : 'register'));
+  const [currentView, setCurrentView] = useState(() => {
+    const token = localStorage.getItem(STORAGE_TOKEN_KEY);
+    if (!token) {
+      return 'register';
+    }
+
+    const profileRaw = localStorage.getItem(STORAGE_PROFILE_KEY);
+    if (profileRaw) {
+      try {
+        const profile = JSON.parse(profileRaw);
+        return profile?.role === 'courier' ? 'courier' : 'order';
+      } catch {
+        return 'order';
+      }
+    }
+
+    return 'order';
+  });
   const [authMode, setAuthMode] = useState('register');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -102,6 +146,8 @@ export default function App() {
     password: '',
     confirmPassword: '',
     login: '',
+    role: 'client',
+    transportType: 'bicycle',
   });
   const [profileForm, setProfileForm] = useState(() => ({
     name: session.profile.name || '',
@@ -124,6 +170,20 @@ export default function App() {
   const [computedPrice, setComputedPrice] = useState(null);
   const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [activeOrderId, setActiveOrderId] = useState(INITIAL_ORDERS[0].id);
+  const [courierOrders, setCourierOrders] = useState([]);
+  const [courierActiveOrderId, setCourierActiveOrderId] = useState('');
+  const [acceptedCourierOrderIds, setAcceptedCourierOrderIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_COURIER_ACCEPTED_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const [courierLoading, setCourierLoading] = useState(false);
+  const [courierError, setCourierError] = useState('');
+  const [courierOnline, setCourierOnline] = useState(false);
   const [formError, setFormError] = useState('');
   const [banner, setBanner] = useState('');
   const [routeInfo, setRouteInfo] = useState({
@@ -138,10 +198,19 @@ export default function App() {
   const [geoStatus, setGeoStatus] = useState({ loading: false, error: '' });
   const [addressSuggestions, setAddressSuggestions] = useState({ from: [], to: [] });
 
-  const activeOrder = useMemo(
+  useEffect(() => {
+    localStorage.setItem(STORAGE_COURIER_ACCEPTED_KEY, JSON.stringify(acceptedCourierOrderIds));
+  }, [acceptedCourierOrderIds]);
+
+  const clientActiveOrder = useMemo(
     () => orders.find((order) => order.id === activeOrderId) ?? orders[0],
     [orders, activeOrderId],
   );
+  const courierActiveOrder = useMemo(
+    () => courierOrders.find((order) => order.id === courierActiveOrderId) ?? courierOrders[0],
+    [courierOrders, courierActiveOrderId],
+  );
+  const activeOrder = currentView === 'courier' ? courierActiveOrder : clientActiveOrder;
 
   const activeStep = STATUS_FLOW.indexOf(activeOrder?.status || STATUS_FLOW[0]);
   const completedOrders = orders.filter((order) => order.status === 'Доставлен').length;
@@ -151,7 +220,7 @@ export default function App() {
     const from = activeOrder?.fromCoords || DEFAULT_FROM_COORDS;
     const to = activeOrder?.toCoords || DEFAULT_TO_COORDS;
     return [Number(((from[0] + to[0]) / 2).toFixed(6)), Number(((from[1] + to[1]) / 2).toFixed(6))];
-  }, [activeOrder]);
+  }, [activeOrder, currentView]);
 
   const updateSession = (nextSession) => {
     setSession(nextSession);
@@ -167,7 +236,11 @@ export default function App() {
 
   const handleAuthChange = (event) => {
     const { name, value } = event.target;
-    setAuthForm((prev) => ({ ...prev, [name]: value }));
+    setAuthForm((prev) => ({
+      ...prev,
+      [name]: value,
+      ...(name === 'role' && value !== 'courier' ? { transportType: 'bicycle' } : {}),
+    }));
   };
 
   const handleProfileChange = (event) => {
@@ -200,6 +273,14 @@ export default function App() {
         setAuthError('Заполни имя, телефон и email.');
         return;
       }
+      if (!['client', 'courier'].includes(authForm.role)) {
+        setAuthError('Выбери роль аккаунта.');
+        return;
+      }
+      if (authForm.role === 'courier' && !authForm.transportType.trim()) {
+        setAuthError('Выбери тип транспорта для курьера.');
+        return;
+      }
       if (authForm.password.length < 8) {
         setAuthError('Пароль должен быть не короче 8 символов.');
         return;
@@ -226,6 +307,8 @@ export default function App() {
             email: authForm.email.trim(),
             password: authForm.password,
             confirmPassword: authForm.confirmPassword,
+            role: authForm.role,
+            transportType: authForm.transportType,
           }),
         });
 
@@ -234,16 +317,27 @@ export default function App() {
           throw new Error(body || `HTTP ${registerResponse.status}`);
         }
 
+        const registerData = await registerResponse.json();
         const loginData = await loginWithCredentials(authForm.email.trim(), authForm.password);
         const nextProfile = {
           name: authForm.name.trim(),
           phone: authForm.phone.trim(),
           email: authForm.email.trim(),
+          role: registerData.role || authForm.role || 'client',
+          courierId: registerData.courier_id || '',
+          transportType: registerData.transportType || registerData.transport_type || authForm.transportType,
         };
 
-        updateSession({ token: loginData.token || '', profile: nextProfile });
+        updateSession({
+          token: loginData.token || '',
+          profile: {
+            ...nextProfile,
+            role: loginData.role || nextProfile.role,
+            courierId: loginData.courier_id || nextProfile.courierId,
+          },
+        });
         setProfileForm(nextProfile);
-        setCurrentView('order');
+        setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
         setAuthNotice('Регистрация и вход выполнены.');
       } else {
         const loginData = await loginWithCredentials(authForm.login.trim(), authForm.password);
@@ -251,11 +345,14 @@ export default function App() {
           name: session.profile.name || '',
           phone: session.profile.phone || '',
           email: authForm.login.includes('@') ? authForm.login.trim() : session.profile.email || '',
+          role: loginData.role || session.profile.role || 'client',
+          courierId: loginData.courier_id || session.profile.courierId || '',
+          transportType: session.profile.transportType || 'bicycle',
         };
 
         updateSession({ token: loginData.token || '', profile: nextProfile });
         setProfileForm(nextProfile);
-        setCurrentView('order');
+        setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
         setAuthNotice('Вход выполнен.');
       }
     } catch (_error) {
@@ -269,6 +366,7 @@ export default function App() {
     event.preventDefault();
 
     const nextProfile = {
+      ...session.profile,
       name: profileForm.name.trim(),
       phone: profileForm.phone.trim(),
       email: profileForm.email.trim(),
@@ -278,14 +376,375 @@ export default function App() {
     setProfileNotice('Профиль сохранён.');
   };
 
+  useEffect(() => {
+    if (currentView !== 'courier' || !session.profile.courierId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadCourierOrders = async () => {
+      setCourierLoading(true);
+      setCourierError('');
+
+      try {
+        const response = await fetch('/api/v1/orders', { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const availableOrders = Array.isArray(data)
+          ? data
+              .filter((order) => !['DELIVERED', 'Доставлен', 'cancelled', 'Отменён'].includes(order.status))
+              .filter((order) => !acceptedCourierOrderIds.includes(order.id))
+              .map((order) => ({
+                ...order,
+                status: formatOrderStatus(order.status),
+                from: order.from_address?.street || order.from || 'Адрес не указан',
+                to: order.to_address?.street || order.to || 'Адрес не указан',
+                fromAddress: order.from_address || null,
+                toAddress: order.to_address || null,
+                fromCoords: order.fromCoords || order.from_coords || null,
+                toCoords: order.toCoords || order.to_coords || null,
+                eta: order.eta || '—',
+              }))
+          : [];
+
+        setCourierOrders(availableOrders);
+        setCourierActiveOrderId((prev) => prev || availableOrders[0]?.id || '');
+      } catch (_error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setCourierError('Не удалось загрузить биржу заказов.');
+      } finally {
+        if (!controller.signal.aborted) {
+          setCourierLoading(false);
+        }
+      }
+    };
+
+    loadCourierOrders();
+    const intervalId = setInterval(loadCourierOrders, 15000);
+
+    return () => {
+      controller.abort();
+      clearInterval(intervalId);
+    };
+  }, [currentView, session.profile.courierId, acceptedCourierOrderIds]);
+
+  useEffect(() => {
+    if (currentView !== 'courier' || !courierActiveOrder) {
+      return;
+    }
+
+    if (courierActiveOrder.fromCoords && courierActiveOrder.toCoords) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const enrichCourierRoute = async () => {
+      const fromLabel = buildAddressLabel(courierActiveOrder.fromAddress);
+      const toLabel = buildAddressLabel(courierActiveOrder.toAddress);
+
+      if (!fromLabel || !toLabel) {
+        return;
+      }
+
+      try {
+        const [fromCoords, toCoords] = await Promise.all([
+          geocodeAddress(fromLabel),
+          geocodeAddress(toLabel),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setCourierOrders((prev) =>
+          prev.map((order) =>
+            order.id === courierActiveOrder.id
+              ? {
+                  ...order,
+                  from: order.from || fromLabel,
+                  to: order.to || toLabel,
+                  fromCoords,
+                  toCoords,
+                }
+              : order,
+          ),
+        );
+      } catch (_error) {
+        if (!cancelled) {
+          setCourierError('Не удалось определить координаты заказа.');
+        }
+      }
+    };
+
+    enrichCourierRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView, courierActiveOrderId, courierActiveOrder, courierOrders.length]);
+
+  const handleCourierToggleOnline = async () => {
+    if (!session.profile.courierId) {
+      setCourierError('Нет courier_id. Перерегистрируйся как курьер.');
+      return;
+    }
+
+    setCourierLoading(true);
+    setCourierError('');
+
+    try {
+      const response = await fetch('/api/v1/couriers/availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courier_id: session.profile.courierId,
+          is_online: !courierOnline,
+          transport_type: session.profile.transportType || 'bicycle',
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || `HTTP ${response.status}`);
+      }
+
+      setCourierOnline((prev) => !prev);
+      setBanner(!courierOnline ? 'Курьер вышел на линию.' : 'Курьер снят с линии.');
+    } catch (_error) {
+      setCourierError('Не удалось обновить статус курьера.');
+    } finally {
+      setCourierLoading(false);
+    }
+  };
+
+  const handleCourierTakeOrder = async (order) => {
+    if (!session.profile.courierId) {
+      setCourierError('Нет courier_id.');
+      return;
+    }
+
+    setCourierLoading(true);
+    setCourierError('');
+
+    try {
+      const response = await fetch(`/api/v1/orders/${order.id}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courier_id: session.profile.courierId,
+          mode: 'manual',
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      setCourierOrders((prev) =>
+        prev.map((item) =>
+          item.id === order.id
+            ? { ...item, status: 'Курьер назначен', eta: result.eta || item.eta }
+            : item,
+        ),
+      );
+      setAcceptedCourierOrderIds((prev) => (prev.includes(order.id) ? prev : [...prev, order.id]));
+      setCourierActiveOrderId(order.id);
+      setBanner(`Заказ ${order.id} принят. ETA: ${result.eta || '—'}`);
+    } catch (_error) {
+      setCourierError('Не удалось принять заказ.');
+    } finally {
+      setCourierLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     updateSession({ token: '', profile: session.profile });
     setCurrentView('register');
     setAuthMode('register');
   };
 
+  const dashboardView = session.profile.role === 'courier' ? 'courier' : 'order';
+
+  if (currentView === 'courier') {
+    return (
+      <main className="page">
+        <section className="dashboard">
+          <header className="topline">
+            <div>
+              <p className="brand-eyebrow">Delivery Service</p>
+              <h1>Биржа заказов курьера</h1>
+              <p className="profile-lead">Выбирай свободный заказ, принимай его и отслеживай маршрут на карте.</p>
+            </div>
+            <div className="topline-right">
+              <div className="chip-row">
+                <span>{courierOrders.length} заказов на бирже</span>
+                <span>{courierOnline ? 'На линии' : 'Оффлайн'}</span>
+                <span>{session.profile.transportType || 'bicycle'}</span>
+              </div>
+              <div className="profile-actions">
+                <button type="button" className="profile-btn" onClick={handleCourierToggleOnline} disabled={courierLoading}>
+                  {courierOnline ? 'Снять с линии' : 'Выйти на линию'}
+                </button>
+                <button type="button" className="profile-btn ghost-btn" onClick={() => setCurrentView('profile')}>
+                  Профиль
+                </button>
+                <button type="button" className="profile-btn ghost-btn" onClick={handleLogout}>
+                  Выйти
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className={mapExpanded ? 'layout-grid map-expanded' : 'layout-grid'}>
+            <section className="orders-panel card-shell">
+              <div className="section-heading">
+                <div>
+                  <p className="brand-eyebrow">Свободные заказы</p>
+                  <h2>Что можно взять в работу</h2>
+                </div>
+                <button type="button" className="link-btn" onClick={handleCourierToggleOnline} disabled={courierLoading}>
+                  {courierOnline ? 'На линии' : 'Включить биржу'}
+                </button>
+              </div>
+              <p className="panel-caption">Нажми на заказ, чтобы открыть его на карте, и затем принимай его в работу.</p>
+              {courierLoading && <p className="panel-caption">Обновляем биржу...</p>}
+              {courierError && <p className="api-error">{courierError}</p>}
+              {courierOrders.length === 0 && !courierLoading && !courierError && <p className="panel-caption">Сейчас нет доступных заказов.</p>}
+
+              <ul className="orders-list compact">
+                {courierOrders.map((order) => {
+                  const isSelected = order.id === courierActiveOrderId;
+                  return (
+                    <li key={order.id}>
+                      <div className={isSelected ? 'market-order selected' : 'market-order'}>
+                        <button
+                          type="button"
+                          className={isSelected ? 'order-item compact-item active' : 'order-item compact-item'}
+                          onClick={() => setCourierActiveOrderId(order.id)}
+                        >
+                          <div>
+                            <strong>{order.id}</strong>
+                            <p>{order.from}</p>
+                            <p>{order.to}</p>
+                          </div>
+                          <div className="order-aside">
+                            <span>{formatOrderStatus(order.status)}</span>
+                            <small>{order.eta || '—'}</small>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className="submit-btn ghost market-accept-btn"
+                          disabled={!courierOnline || courierLoading || order.status === 'Курьер назначен'}
+                          onClick={() => handleCourierTakeOrder(order)}
+                        >
+                          Принять заказ
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+
+            <section className={mapExpanded ? 'map-panel card-shell map-panel-expanded' : 'map-panel card-shell'}>
+              <div className="map-header">
+                <h2>Маршрут заказа</h2>
+                <span>{courierActiveOrder?.eta || 'нет данных'}</span>
+              </div>
+              <div className="map-tools">
+                <button type="button" className="map-target-btn" onClick={handleCourierToggleOnline} disabled={courierLoading}>
+                  {courierOnline ? 'Снять с линии' : 'Выйти на линию'}
+                </button>
+                <button type="button" className="map-target-btn" onClick={() => setMapExpanded((prev) => !prev)}>
+                  {mapExpanded ? 'Свернуть карту' : 'Развернуть карту'}
+                </button>
+                <button type="button" className="map-target-btn" onClick={() => setCourierOrders([])} disabled={courierLoading}>
+                  Очистить биржу
+                </button>
+              </div>
+              <div className="map-canvas interactive">
+                <MapContainer center={mapCenter} zoom={11} scrollWheelZoom className="leaflet-map">
+                  <TileLayer
+                    attribution='&copy; OpenStreetMap contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+
+                  {activeOrder?.fromCoords && (
+                    <CircleMarker center={activeOrder.fromCoords} radius={8} pathOptions={{ color: '#2f7fd8' }}>
+                      <Tooltip direction="top" permanent>
+                        A
+                      </Tooltip>
+                    </CircleMarker>
+                  )}
+
+                  {activeOrder?.toCoords && (
+                    <CircleMarker center={activeOrder.toCoords} radius={8} pathOptions={{ color: '#e55a2b' }}>
+                      <Tooltip direction="top" permanent>
+                        B
+                      </Tooltip>
+                    </CircleMarker>
+                  )}
+
+                  {routeInfo.geometry.length > 1 && (
+                    <Polyline positions={routeInfo.geometry} pathOptions={{ color: '#1d5faa', weight: 5 }} />
+                  )}
+                </MapContainer>
+              </div>
+              <div className="map-meta">
+                <p>
+                  <strong>Курьер ID:</strong> {session.profile.courierId || '—'}
+                </p>
+                <p>
+                  <strong>Заказ:</strong> {activeOrder?.id || '—'}
+                </p>
+                <p>
+                  <strong>Откуда:</strong> {activeOrder?.from || '—'}
+                </p>
+                <p>
+                  <strong>Куда:</strong> {activeOrder?.to || '—'}
+                </p>
+                <p>
+                  <strong>Дистанция:</strong>{' '}
+                  {routeInfo.loading
+                    ? 'Считаем...'
+                    : routeInfo.distanceKm !== null
+                      ? `${routeInfo.distanceKm} км`
+                      : '—'}
+                </p>
+                <p>
+                  <strong>В пути:</strong>{' '}
+                  {routeInfo.loading
+                    ? 'Считаем...'
+                    : routeInfo.durationMin !== null
+                      ? `${routeInfo.durationMin} мин`
+                      : '—'}
+                </p>
+                {routeInfo.error && <p className="api-error">{routeInfo.error}</p>}
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   useEffect(() => {
     if (!activeOrder) {
+      return;
+    }
+
+    if (currentView === 'courier' && (!activeOrder.fromCoords || !activeOrder.toCoords)) {
+      setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
       return;
     }
 
@@ -708,8 +1167,8 @@ export default function App() {
         <section className="auth-shell">
           <header className="auth-header">
             <p className="brand-eyebrow">Delivery Service</p>
-            <h1>{authMode === 'register' ? 'Регистрация клиента' : 'Вход в аккаунт'}</h1>
-            <p>{authMode === 'register' ? 'Сначала создаем профиль, затем сразу попадаем в заказ.' : 'Войди, чтобы открыть панель заказа.'}</p>
+            <h1>{authMode === 'register' ? 'Регистрация аккаунта' : 'Вход в аккаунт'}</h1>
+            <p>{authMode === 'register' ? 'Создай профиль клиента или курьера и сразу попади в нужный экран.' : 'Войди, чтобы открыть свою панель.'}</p>
           </header>
 
           <form className="auth-form" onSubmit={handleAuthSubmit}>
@@ -729,6 +1188,23 @@ export default function App() {
 
                 <label htmlFor="auth-confirmPassword">Подтверждение пароля</label>
                 <input id="auth-confirmPassword" name="confirmPassword" type="password" value={authForm.confirmPassword} onChange={handleAuthChange} placeholder="Повтори пароль" />
+
+                <label htmlFor="auth-role">Роль</label>
+                <select id="auth-role" name="role" value={authForm.role} onChange={handleAuthChange}>
+                  <option value="client">Клиент</option>
+                  <option value="courier">Курьер</option>
+                </select>
+
+                {authForm.role === 'courier' && (
+                  <>
+                    <label htmlFor="auth-transportType">Транспорт</label>
+                    <select id="auth-transportType" name="transportType" value={authForm.transportType} onChange={handleAuthChange}>
+                      <option value="bicycle">Велосипед</option>
+                      <option value="scooter">Самокат</option>
+                      <option value="car">Авто</option>
+                    </select>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -781,7 +1257,7 @@ export default function App() {
                 <span>{completedOrders} доставлено</span>
               </div>
               <div className="profile-actions">
-                <button type="button" className="profile-btn" onClick={() => setCurrentView('order')}>
+                <button type="button" className="profile-btn" onClick={() => setCurrentView(dashboardView)}>
                   К заказам
                 </button>
                 <button type="button" className="profile-btn ghost-btn" onClick={handleLogout}>
@@ -850,7 +1326,7 @@ export default function App() {
 
                 <div className="profile-actions stacked">
                   <button type="submit" className="submit-btn">Сохранить профиль</button>
-                  <button type="button" className="submit-btn ghost" onClick={() => setCurrentView('order')}>Вернуться к заказам</button>
+                  <button type="button" className="submit-btn ghost" onClick={() => setCurrentView(dashboardView)}>Вернуться к заказам</button>
                 </div>
 
                 {profileNotice && <p className="success">{profileNotice}</p>}
@@ -863,7 +1339,7 @@ export default function App() {
                   <p className="brand-eyebrow">Недавние заказы</p>
                   <h2>Последние доставки</h2>
                 </div>
-                <button type="button" className="link-btn" onClick={() => setCurrentView('order')}>
+                <button type="button" className="link-btn" onClick={() => setCurrentView(dashboardView)}>
                   Открыть панель заказов
                 </button>
               </div>
@@ -871,7 +1347,7 @@ export default function App() {
               <ul className="orders-list compact">
                 {recentOrders.map((order) => (
                   <li key={`profile-${order.id}`}>
-                    <button type="button" className="order-item compact-item" onClick={() => { setActiveOrderId(order.id); setCurrentView('order'); }}>
+                    <button type="button" className="order-item compact-item" onClick={() => { setActiveOrderId(order.id); setCurrentView(dashboardView); }}>
                       <div>
                         <strong>{order.id}</strong>
                         <p>{order.from}</p>
@@ -898,8 +1374,8 @@ export default function App() {
         <header className="topline">
           <div>
             <p className="brand-eyebrow">Delivery Service</p>
-            <h1>Заказы и доставка</h1>
-            <p className="profile-lead">Список заказов, создание новой доставки и карта маршрута в одном экране.</p>
+                  <h1>Заказы и доставка</h1>
+                  <p className="profile-lead">Список заказов, создание новой доставки и карта маршрута в одном экране.</p>
           </div>
           <div className="topline-right">
             <div className="chip-row">
@@ -1211,9 +1687,7 @@ export default function App() {
                 </li>
               ))}
             </ol>
-            <button type="button" className="submit-btn ghost" onClick={simulateStep}>
-              Обновить статус
-            </button>
+            <p className="panel-caption">Статус обновляется через курьерский экран после принятия заказа.</p>
           </article>
         </section>
       </section>

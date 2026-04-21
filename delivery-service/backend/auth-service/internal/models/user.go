@@ -15,6 +15,8 @@ type RegisterInput struct {
 	Email           string `json:"email" binding:"required,email"`
 	Password        string `json:"password" binding:"required,min=8"`
 	ConfirmPassword string `json:"confirmPassword" binding:"required,min=8,eqfield=Password"`
+	Role            string `json:"role"`
+	TransportType   string `json:"transportType"`
 }
 
 type LoginInput struct {

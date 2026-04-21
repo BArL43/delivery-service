@@ -34,6 +34,9 @@ func (m *mockCourierRepo) GetByID(ctx context.Context, id string) (*models.Couri
 	c := *m.courier
 	return &c, nil
 }
+func (m *mockCourierRepo) GetByEmail(ctx context.Context, email string) (*models.Courier, error) {
+	return m.GetByID(ctx, "")
+}
 func (m *mockCourierRepo) UpdateStatus(ctx context.Context, id string, isOnline bool, transportType string) error {
 	return m.updateErr
 }

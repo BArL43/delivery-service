@@ -365,6 +365,21 @@ body {
   padding: 10px 12px;
 }
 
+.market-order {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.market-order.selected .order-item {
+  border-color: rgba(37, 112, 198, 0.34);
+  box-shadow: 0 0 0 3px rgba(37, 112, 198, 0.09);
+}
+
+.market-accept-btn {
+  width: 100%;
+}
+
 .field-hint {
   margin: -2px 0 0;
   color: var(--text-subtle);
