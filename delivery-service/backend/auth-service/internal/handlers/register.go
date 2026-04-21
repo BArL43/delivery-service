@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -61,7 +62,20 @@ func Register(c *gin.Context) {
 	if err != nil {
 		observability.Logger().Warn("auth_register_save_failed", "error", err, "email", input.Email)
 		observability.Stats().ObserveBusiness("register", "failure")
-		c.JSON(409, gin.H{"error": "Ошибка при сохранении пользователя (возможно email уже занят"})
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			switch pqErr.Constraint {
+			case "users_email_key":
+				c.JSON(409, gin.H{"error": "Пользователь с таким email уже существует"})
+				return
+			case "users_phone_key":
+				c.JSON(409, gin.H{"error": "Пользователь с таким телефоном уже существует"})
+				return
+			default:
+				c.JSON(409, gin.H{"error": fmt.Sprintf("Пользователь уже существует: %s", pqErr.Constraint)})
+				return
+			}
+		}
+		c.JSON(500, gin.H{"error": "Не удалось сохранить пользователя"})
 		return
 	}
 
