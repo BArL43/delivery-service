@@ -16,7 +16,7 @@ test_auth_service:
   stage: test
   image: golang:1.26-alpine
   script:
-    - cd backend/auth-service
+    - cd delivery-service/backend/auth-service
     - go test ./...
     - go build ./...
 
@@ -51,7 +51,7 @@ build_and_push:
     - export DOCKER_AUTH_BASE64="$(printf '%s:%s' "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n\r')"
     - printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$DOCKER_AUTH_BASE64" > /kaniko/.docker/config.json
   script:
-    - /kaniko/executor --context "$CI_PROJECT_DIR/backend/auth-service" --dockerfile "$CI_PROJECT_DIR/backend/auth-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}" --cache=true
+    - /kaniko/executor --context "$CI_PROJECT_DIR/delivery-service/backend/auth-service" --dockerfile "$CI_PROJECT_DIR/delivery-service/backend/auth-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}" --cache=true
     - /kaniko/executor --context "$CI_PROJECT_DIR/frontend" --dockerfile "$CI_PROJECT_DIR/frontend/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}" --cache=true
     - /kaniko/executor --context "$CI_PROJECT_DIR" --dockerfile "$CI_PROJECT_DIR/Dockerfile.proxy" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG}" --cache=true
   rules:
