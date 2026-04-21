@@ -90,7 +90,6 @@ services:
       - frontend
       - auth-service
       - order-service
-      - osrm
     ports:
       - "80:80"
 
