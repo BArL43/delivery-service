@@ -2,10 +2,11 @@ package handlers
 
 import (
 	"database/sql"
+	"projectYandexLyceumFinal/internal/models"
 	"projectYandexLyceumFinal/internal/observability"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
-	"projectYandexLyceumFinal/internal/models"
 )
 
 var db *sql.DB

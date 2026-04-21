@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
-	"log/slog"
 	"os/signal"
 	"syscall"
 	"time"
