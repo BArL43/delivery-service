@@ -27,6 +27,19 @@ services:
       postgres:
         condition: service_healthy
 
+  order-service:
+    image: ${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG:-latest}
+    container_name: delivery-order-service
+    environment:
+      ORDER_PORT: "8080"
+      ORDER_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
+      PRICING_BASE_RATE: "150"
+      PRICING_PER_KM_RATE: "20"
+      PRICING_PER_KG_RATE: "50"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   frontend:
     image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
     container_name: delivery-frontend
@@ -76,6 +89,7 @@ services:
     depends_on:
       - frontend
       - auth-service
+      - order-service
       - osrm
     ports:
       - "80:80"
