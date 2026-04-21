@@ -3,9 +3,9 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"projectYandexLyceumFinal/internal/models"
 	"projectYandexLyceumFinal/internal/observability"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -80,10 +80,10 @@ func Register(c *gin.Context) {
 	observability.Stats().ObserveBusiness("register", "success")
 
 	c.JSON(201, gin.H{
-		"message":     "Пользователь успешно зарегистрирован",
-		"user_id":     newUser.Id,
-		"role":        role,
-		"courier_id":   courierID,
+		"message":       "Пользователь успешно зарегистрирован",
+		"user_id":       newUser.Id,
+		"role":          role,
+		"courier_id":    courierID,
 		"transportType": transportType,
 	})
 }

@@ -12,8 +12,8 @@ import (
 	"order-service/internal/observability"
 	"order-service/internal/storage"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type CourierHandler struct {
@@ -101,13 +101,13 @@ func (h *CourierHandler) GetCourierByEmail(w http.ResponseWriter, r *http.Reques
 
 	observability.Stats().ObserveBusiness("courier_lookup", "success")
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"courier_id":     courier.ID,
-		"user_id":        courier.UserID,
-		"email":          courier.Email,
-		"full_name":      courier.FullName,
-		"phone":          courier.Phone,
-		"transport_type": courier.TransportType,
-		"is_online":      courier.IsOnline,
+		"courier_id":      courier.ID,
+		"user_id":         courier.UserID,
+		"email":           courier.Email,
+		"full_name":       courier.FullName,
+		"phone":           courier.Phone,
+		"transport_type":  courier.TransportType,
+		"is_online":       courier.IsOnline,
 		"active_order_id": courier.ActiveOrderID,
 	})
 }
