@@ -73,8 +73,8 @@ deploy_to_server:
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
-    - ssh-keyscan -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+    - ssh-keyscan -t ed25519,rsa,ecdsa -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
   script:
-    - ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
+    - ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
