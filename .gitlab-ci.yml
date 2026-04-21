@@ -71,10 +71,10 @@ deploy_to_server:
     - command -v ssh >/dev/null || (echo "ssh client is not installed on the runner host. Install openssh-client." && exit 1)
     - command -v ssh-keyscan >/dev/null || (echo "ssh-keyscan is not installed on the runner host. Install openssh-client." && exit 1)
     - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+    - printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
     - ssh-keyscan -t ed25519,rsa,ecdsa -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
   script:
-    - ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
+    - ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
