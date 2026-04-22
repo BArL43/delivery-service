@@ -2037,8 +2037,6 @@ export default function App() {
               )}
               {formRouteInfo.loading && <p className="field-hint">Считаем маршрут и цену для этого заказа...</p>}
               {formRouteInfo.error && <p className="api-error">{formRouteInfo.error}</p>}
-              {formRouteInfo.loading && <p className="field-hint">Считаем маршрут и цену для этого заказа...</p>}
-              {formRouteInfo.error && <p className="api-error">{formRouteInfo.error}</p>}
 
               <div className="field-row">
                 <div className="field">
@@ -2178,22 +2176,32 @@ export default function App() {
                     ? `${routeInfo.durationMin} мин`
                     : '—'}
               </p>
-              {activeOrder?.price && (
+              {((currentView === 'order' && computedPrice !== null) || activeOrder?.price !== undefined) && (
                 <p>
                   <strong>Стоимость:</strong>{' '}
                   <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
-                    {activeOrder.price}₽
+                    {currentView === 'order' && computedPrice !== null ? `${computedPrice}₽` : `${activeOrder.price}₽`}
                   </span>
                 </p>
               )}
-              {routeInfo.distanceKm !== null && activeOrder?.weight !== undefined && (
+              {((currentView === 'order' && computedPrice !== null) || routeInfo.distanceKm !== null) && (
                 <div className="price-breakdown">
                   <span>База: {PRICING.BASE_RATE}₽</span>
                   <span>
-                    Дистанция: {Math.ceil(routeInfo.distanceKm)} км × {PRICING.PER_KM_RATE}₽
+                    Дистанция:{' '}
+                    {currentView === 'order' && formRouteInfo.distanceKm !== null
+                      ? `${Math.ceil(formRouteInfo.distanceKm)} км × ${PRICING.PER_KM_RATE}₽`
+                      : routeInfo.distanceKm !== null
+                        ? `${Math.ceil(routeInfo.distanceKm)} км × ${PRICING.PER_KM_RATE}₽`
+                        : '—'}
                   </span>
                   <span>
-                    Вес: {Number(activeOrder.weight || 0).toFixed(1)} кг × {PRICING.PER_KG_RATE}₽
+                    Вес:{' '}
+                    {currentView === 'order' && form.weight
+                      ? `${(parseFloat(form.weight) || 0).toFixed(1)} кг × ${PRICING.PER_KG_RATE}₽`
+                      : activeOrder?.weight !== undefined
+                        ? `${Number(activeOrder.weight || 0).toFixed(1)} кг × ${PRICING.PER_KG_RATE}₽`
+                        : '—'}
                   </span>
                 </div>
               )}
@@ -2243,9 +2251,6 @@ export default function App() {
               ))}
             </ol>
             <p className="panel-caption">Текущий статус: {formatOrderStatus(activeOrder?.status)}.</p>
-            <button type="button" className="submit-btn ghost" onClick={refreshClientOrders}>
-              Обновить статусы
-            </button>
           </article>
         </section>
       </section>
