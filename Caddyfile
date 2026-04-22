@@ -25,6 +25,10 @@ nezy.online, www.nezy.online {
     reverse_proxy auth-service:8081
   }
 
+  handle_path /grafana* {
+    reverse_proxy delivery-grafana:3000
+  }
+
   handle {
     reverse_proxy frontend:80
   }
