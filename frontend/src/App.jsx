@@ -463,6 +463,119 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!activeOrder) {
+      return;
+    }
+
+    if (currentView === 'courier' && (!activeOrder.fromCoords || !activeOrder.toCoords)) {
+      setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
+      return;
+    }
+
+    const fromCoords = activeOrder.fromCoords || DEFAULT_FROM_COORDS;
+    const toCoords = activeOrder.toCoords || DEFAULT_TO_COORDS;
+    const controller = new AbortController();
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const maxAttempts = 60;
+    const retryDelayMs = 5000;
+
+    const loadRoute = async () => {
+      setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const query = new URLSearchParams({
+            fromLat: String(fromCoords[0]),
+            fromLon: String(fromCoords[1]),
+            toLat: String(toCoords[0]),
+            toLon: String(toCoords[1]),
+          });
+          const response = await fetch(
+            `/api/route?${query.toString()}`,
+            { signal: controller.signal },
+          );
+
+          if (!response.ok) {
+            const responseText = await response.text();
+            const routeError = new Error(responseText || `HTTP ${response.status}`);
+            routeError.status = response.status;
+            throw routeError;
+          }
+
+          const data = await response.json();
+          if (!Number.isFinite(data.distance) || !Number.isFinite(data.duration)) {
+            throw new Error('Маршрут не найден');
+          }
+
+          const geometry = Array.isArray(data.geometry?.coordinates)
+            ? data.geometry.coordinates
+                .filter((pair) =>
+                  Array.isArray(pair) &&
+                  pair.length >= 2 &&
+                  Number.isFinite(pair[0]) &&
+                  Number.isFinite(pair[1]),
+                )
+                .map((pair) => [pair[1], pair[0]])
+            : [];
+
+          const distanceKm = Number((data.distance / 1000).toFixed(1));
+          const durationMin = Math.max(1, Math.round(data.duration / 60));
+          setRouteInfo({ loading: false, distanceKm, durationMin, geometry, error: '' });
+
+          const eta = routeToEta(data.duration);
+          setOrders((prev) =>
+            prev.map((order) =>
+              order.id === activeOrder.id && order.eta !== eta ? { ...order, eta } : order,
+            ),
+          );
+          return;
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            return;
+          }
+
+          const status = Number(error.status) || 0;
+          const retryable = status === 0 || status >= 500;
+
+          if (attempt < maxAttempts && retryable) {
+            await sleep(retryDelayMs);
+            continue;
+          }
+
+          const reason = error.message || 'неизвестная ошибка';
+          const fallbackMessage = status === 404
+            ? 'Маршрут не найден для выбранных точек.'
+            : `Маршрут недоступен: ${reason}. Проверь /api/route и контейнеры auth-service + osrm.`;
+
+          setRouteInfo({
+            loading: false,
+            distanceKm: null,
+            durationMin: null,
+            geometry: [],
+            error: fallbackMessage,
+          });
+        }
+      }
+    };
+
+    loadRoute();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeOrder]);
+
+  // Compute price preview when distance and weight change
+  useEffect(() => {
+    if (routeInfo.distanceKm === null) {
+      setComputedPrice(null);
+      return;
+    }
+    const weight = parseFloat(form.weight) || 0;
+    setComputedPrice(computePrice(routeInfo.distanceKm, weight));
+  }, [routeInfo.distanceKm, form.weight]);
+
+  useEffect(() => {
     if (currentView !== 'courier' || session.profile.role !== 'courier') {
       return;
     }
@@ -814,119 +927,6 @@ export default function App() {
       </main>
     );
   }
-
-  useEffect(() => {
-    if (!activeOrder) {
-      return;
-    }
-
-    if (currentView === 'courier' && (!activeOrder.fromCoords || !activeOrder.toCoords)) {
-      setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
-      return;
-    }
-
-    const fromCoords = activeOrder.fromCoords || DEFAULT_FROM_COORDS;
-    const toCoords = activeOrder.toCoords || DEFAULT_TO_COORDS;
-    const controller = new AbortController();
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const maxAttempts = 60;
-    const retryDelayMs = 5000;
-
-    const loadRoute = async () => {
-      setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        try {
-          const query = new URLSearchParams({
-            fromLat: String(fromCoords[0]),
-            fromLon: String(fromCoords[1]),
-            toLat: String(toCoords[0]),
-            toLon: String(toCoords[1]),
-          });
-          const response = await fetch(
-            `/api/route?${query.toString()}`,
-            { signal: controller.signal },
-          );
-
-          if (!response.ok) {
-            const responseText = await response.text();
-            const routeError = new Error(responseText || `HTTP ${response.status}`);
-            routeError.status = response.status;
-            throw routeError;
-          }
-
-          const data = await response.json();
-          if (!Number.isFinite(data.distance) || !Number.isFinite(data.duration)) {
-            throw new Error('Маршрут не найден');
-          }
-
-          const geometry = Array.isArray(data.geometry?.coordinates)
-            ? data.geometry.coordinates
-                .filter((pair) =>
-                  Array.isArray(pair) &&
-                  pair.length >= 2 &&
-                  Number.isFinite(pair[0]) &&
-                  Number.isFinite(pair[1]),
-                )
-                .map((pair) => [pair[1], pair[0]])
-            : [];
-
-          const distanceKm = Number((data.distance / 1000).toFixed(1));
-          const durationMin = Math.max(1, Math.round(data.duration / 60));
-          setRouteInfo({ loading: false, distanceKm, durationMin, geometry, error: '' });
-
-          const eta = routeToEta(data.duration);
-          setOrders((prev) =>
-            prev.map((order) =>
-              order.id === activeOrder.id && order.eta !== eta ? { ...order, eta } : order,
-            ),
-          );
-          return;
-        } catch (error) {
-          if (error.name === 'AbortError') {
-            return;
-          }
-
-          const status = Number(error.status) || 0;
-          const retryable = status === 0 || status >= 500;
-
-          if (attempt < maxAttempts && retryable) {
-            await sleep(retryDelayMs);
-            continue;
-          }
-
-          const reason = error.message || 'неизвестная ошибка';
-          const fallbackMessage = status === 404
-            ? 'Маршрут не найден для выбранных точек.'
-            : `Маршрут недоступен: ${reason}. Проверь /api/route и контейнеры auth-service + osrm.`;
-
-          setRouteInfo({
-            loading: false,
-            distanceKm: null,
-            durationMin: null,
-            geometry: [],
-            error: fallbackMessage,
-          });
-        }
-      }
-    };
-
-    loadRoute();
-
-    return () => {
-      controller.abort();
-    };
-  }, [activeOrder]);
-
-  // Compute price preview when distance and weight change
-  useEffect(() => {
-    if (routeInfo.distanceKm === null) {
-      setComputedPrice(null);
-      return;
-    }
-    const weight = parseFloat(form.weight) || 0;
-    setComputedPrice(computePrice(routeInfo.distanceKm, weight));
-  }, [routeInfo.distanceKm, form.weight]);
 
   const handleMapClick = (nextCoords) => {
     if (!activeOrder) {
