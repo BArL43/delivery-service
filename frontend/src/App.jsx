@@ -939,7 +939,7 @@ export default function App() {
                         <button
                           type="button"
                           className="submit-btn ghost market-accept-btn"
-                          disabled={!courierOnline || courierLoading || order.status === 'Курьер назначен'}
+                          disabled={courierLoading || order.status === 'Курьер назначен'}
                           onClick={() => handleCourierTakeOrder(order)}
                         >
                           Принять заказ

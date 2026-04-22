@@ -205,10 +205,14 @@ func (h *CourierHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) 
 
 // AssignOrder handles POST /orders/{orderId}/assign
 func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/orders/")
-	path = strings.TrimSuffix(path, "/")
-	orderId := strings.TrimSuffix(path, "/assign")
-	orderId = strings.TrimSuffix(orderId, "/")
+	orderId := strings.TrimSpace(r.PathValue("orderId"))
+	if orderId == "" {
+		path := strings.TrimPrefix(r.URL.Path, "/orders/")
+		path = strings.TrimPrefix(path, "/api/v1/orders/")
+		path = strings.TrimSuffix(path, "/")
+		orderId = strings.TrimSuffix(path, "/assign")
+		orderId = strings.TrimSuffix(orderId, "/")
+	}
 
 	if orderId == "" {
 		observability.Stats().ObserveBusiness("courier_assign", "failure")
@@ -300,10 +304,14 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 
 // GetActiveOrder handles GET /couriers/{courierId}/active-order
 func (h *CourierHandler) GetActiveOrder(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/couriers/")
-	path = strings.TrimSuffix(path, "/")
-	courierId := strings.TrimSuffix(path, "/active-order")
-	courierId = strings.TrimSuffix(courierId, "/")
+	courierId := strings.TrimSpace(r.PathValue("courierId"))
+	if courierId == "" {
+		path := strings.TrimPrefix(r.URL.Path, "/couriers/")
+		path = strings.TrimPrefix(path, "/api/v1/couriers/")
+		path = strings.TrimSuffix(path, "/")
+		courierId = strings.TrimSuffix(path, "/active-order")
+		courierId = strings.TrimSuffix(courierId, "/")
+	}
 
 	if courierId == "" {
 		observability.Stats().ObserveBusiness("courier_active_order_lookup", "failure")
