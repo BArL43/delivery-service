@@ -88,6 +88,18 @@ const buildAddressLabel = (address) => {
     .join(', ');
 };
 
+const normalizeBackendOrder = (order) => ({
+  ...order,
+  status: formatOrderStatus(order.status),
+  from: buildAddressLabel(order.from_address) || order.from || 'Адрес не указан',
+  to: buildAddressLabel(order.to_address) || order.to || 'Адрес не указан',
+  fromAddress: order.from_address || null,
+  toAddress: order.to_address || null,
+  fromCoords: order.fromCoords || order.from_coords || null,
+  toCoords: order.toCoords || order.to_coords || null,
+  eta: order.eta || '—',
+});
+
 function MapClickHandler({ onPick }) {
   useMapEvents({
     click(event) {
@@ -201,6 +213,58 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_COURIER_ACCEPTED_KEY, JSON.stringify(acceptedCourierOrderIds));
   }, [acceptedCourierOrderIds]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadBackendOrders = async () => {
+      try {
+        const response = await fetch('/api/v1/orders', { signal: controller.signal });
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          return;
+        }
+
+        const mappedOrders = data.map(normalizeBackendOrder);
+        const enrichedOrders = await Promise.all(
+          mappedOrders.map(async (order) => {
+            if (order.fromCoords && order.toCoords) {
+              return order;
+            }
+
+            const fromLabel = order.fromAddress ? buildAddressLabel(order.fromAddress) : order.from;
+            const toLabel = order.toAddress ? buildAddressLabel(order.toAddress) : order.to;
+
+            try {
+              const [fromCoords, toCoords] = await Promise.all([
+                order.fromCoords ? Promise.resolve(order.fromCoords) : geocodeAddress(fromLabel),
+                order.toCoords ? Promise.resolve(order.toCoords) : geocodeAddress(toLabel),
+              ]);
+
+              return { ...order, fromCoords, toCoords };
+            } catch {
+              return order;
+            }
+          }),
+        );
+
+        setOrders(enrichedOrders);
+        setActiveOrderId((prev) => (enrichedOrders.some((order) => order.id === prev) ? prev : enrichedOrders[0].id));
+      } catch (_error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+      }
+    };
+
+    loadBackendOrders();
+
+    return () => controller.abort();
+  }, []);
 
   const clientActiveOrder = useMemo(
     () => orders.find((order) => order.id === activeOrderId) ?? orders[0],
@@ -399,7 +463,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (currentView !== 'courier' || !session.profile.courierId) {
+    if (currentView !== 'courier' || session.profile.role !== 'courier') {
       return;
     }
 
@@ -420,17 +484,7 @@ export default function App() {
           ? data
               .filter((order) => !['DELIVERED', 'Доставлен', 'cancelled', 'Отменён'].includes(order.status))
               .filter((order) => !acceptedCourierOrderIds.includes(order.id))
-              .map((order) => ({
-                ...order,
-                status: formatOrderStatus(order.status),
-                from: order.from_address?.street || order.from || 'Адрес не указан',
-                to: order.to_address?.street || order.to || 'Адрес не указан',
-                fromAddress: order.from_address || null,
-                toAddress: order.to_address || null,
-                fromCoords: order.fromCoords || order.from_coords || null,
-                toCoords: order.toCoords || order.to_coords || null,
-                eta: order.eta || '—',
-              }))
+              .map(normalizeBackendOrder)
           : [];
 
         setCourierOrders(availableOrders);
@@ -595,6 +649,7 @@ export default function App() {
   };
 
   const dashboardView = session.profile.role === 'courier' ? 'courier' : 'order';
+  const isCourier = session.profile.role === 'courier';
 
   if (currentView === 'courier') {
     return (
@@ -1280,8 +1335,12 @@ export default function App() {
           <header className="topline profile-topline">
             <div>
               <p className="brand-eyebrow">Delivery Service</p>
-              <h1>Профиль пользователя</h1>
-              <p className="profile-lead">Здесь можно быстро обновить данные, посмотреть активность и вернуться к заказам.</p>
+              <h1>{isCourier ? 'Профиль курьера' : 'Профиль пользователя'}</h1>
+              <p className="profile-lead">
+                {isCourier
+                  ? 'Здесь видны данные курьера, транспорт и быстрый возврат на биржу заказов.'
+                  : 'Здесь можно быстро обновить данные, посмотреть активность и вернуться к заказам.'}
+              </p>
             </div>
             <div className="topline-right">
               <div className="chip-row">
@@ -1311,18 +1370,26 @@ export default function App() {
                 <p className="profile-muted">{profileForm.email || 'email не указан'}</p>
               </div>
 
+              {isCourier && (
+                <div className="profile-spotlight">
+                  <p className="brand-eyebrow">Курьерский аккаунт</p>
+                  <strong>{session.profile.courierId || 'courier_id не найден'}</strong>
+                  <span>{session.profile.transportType || 'bicycle'} · {courierOnline ? 'на линии' : 'оффлайн'}</span>
+                </div>
+              )}
+
               <div className="profile-stats">
                 <div className="stat-card">
                   <strong>{orders.length}</strong>
                   <span>Всего заказов</span>
                 </div>
                 <div className="stat-card">
-                  <strong>{activeOrder ? 1 : 0}</strong>
-                  <span>Активный заказ</span>
+                  <strong>{isCourier ? courierOrders.length : activeOrder ? 1 : 0}</strong>
+                  <span>{isCourier ? 'Заказов на бирже' : 'Активный заказ'}</span>
                 </div>
                 <div className="stat-card">
-                  <strong>{completedOrders}</strong>
-                  <span>Доставлено</span>
+                  <strong>{isCourier ? acceptedCourierOrderIds.length : completedOrders}</strong>
+                  <span>{isCourier ? 'Взято в работу' : 'Доставлено'}</span>
                 </div>
               </div>
 

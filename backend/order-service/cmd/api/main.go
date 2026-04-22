@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"order-service/internal/handlers"
+	"order-service/internal/models"
 	"order-service/internal/observability"
 	"order-service/internal/pricing"
 	"order-service/internal/storage"
@@ -65,6 +66,11 @@ func main() {
 
 	// 3. Dependency Injection
 	orderRepo := storage.NewPostgresOrderRepository(pool)
+	if err := seedDemoOrders(ctx, orderRepo, priceCalc); err != nil {
+		logger.Error("demo_orders_seed_failed", "service", "order-service", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("demo_orders_ready", "service", "order-service")
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
 
 	// 4. Courier dependencies
@@ -197,6 +203,56 @@ func ensureCourierSchema(ctx context.Context, pool *pgxpool.Pool) error {
 
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func seedDemoOrders(ctx context.Context, orderRepo storage.OrderRepository, priceCalc *pricing.Calculator) error {
+	existing, err := orderRepo.List(ctx)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+
+	demoOrders := []struct {
+		from    models.Address
+		to      models.Address
+		weight  float64
+		distance float64
+		status  string
+	}{
+		{
+			from: models.Address{City: "Москва", Street: "Тверская 14"},
+			to: models.Address{City: "Москва", Street: "Ленинский проспект 30"},
+			weight: 1.5, distance: 5.2, status: "created",
+		},
+		{
+			from: models.Address{City: "Москва", Street: "Арбат 7"},
+			to: models.Address{City: "Москва", Street: "Парк Победы 1"},
+			weight: 2.1, distance: 8.4, status: "SEARCHING_COURIER",
+		},
+		{
+			from: models.Address{City: "Москва", Street: "Проспект Мира 102"},
+			to: models.Address{City: "Москва", Street: "Кутузовский проспект 45"},
+			weight: 0.8, distance: 11.7, status: "COURIER_ASSIGNED",
+		},
+		{
+			from: models.Address{City: "Москва", Street: "Садовая-Самотечная 7"},
+			to: models.Address{City: "Москва", Street: "Новая Басманная 12"},
+			weight: 3.0, distance: 4.6, status: "PICKED_UP",
+		},
+	}
+
+	for _, item := range demoOrders {
+		price := priceCalc.Calculate(item.distance, item.weight)
+		order := models.NewOrder("00000000-0000-0000-0000-000000000000", item.from, item.to, item.weight, price)
+		order.Status = item.status
+		if err := orderRepo.Create(ctx, order); err != nil {
 			return err
 		}
 	}
