@@ -167,6 +167,8 @@ export default function App() {
     email: session.profile.email || '',
   }));
   const [profileNotice, setProfileNotice] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const [form, setForm] = useState({
     from: '',
@@ -196,6 +198,7 @@ export default function App() {
   const [courierLoading, setCourierLoading] = useState(false);
   const [courierError, setCourierError] = useState('');
   const [courierOnline, setCourierOnline] = useState(false);
+  const [courierRefreshTick, setCourierRefreshTick] = useState(0);
   const [formError, setFormError] = useState('');
   const [banner, setBanner] = useState('');
   const [routeInfo, setRouteInfo] = useState({
@@ -448,8 +451,11 @@ export default function App() {
     }
   };
 
-  const handleSaveProfile = (event) => {
+  const handleSaveProfile = async (event) => {
     event.preventDefault();
+
+    setProfileError('');
+    setProfileNotice('');
 
     const nextProfile = {
       ...session.profile,
@@ -458,8 +464,38 @@ export default function App() {
       email: profileForm.email.trim(),
     };
 
-    updateSession({ ...session, profile: nextProfile });
-    setProfileNotice('Профиль сохранён.');
+    if (!session.token) {
+      setProfileError('Сначала войди в аккаунт заново, чтобы сохранить профиль на сервере.');
+      return;
+    }
+
+    setProfileSaving(true);
+
+    try {
+      const response = await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.token}`,
+        },
+        body: JSON.stringify(nextProfile),
+      });
+
+      if (!response.ok) {
+        const body = await readResponseError(response);
+        throw new Error(body || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      updateSession({ ...session, profile: nextProfile });
+      setProfileForm(nextProfile);
+      setProfileNotice(result.message || 'Профиль сохранён.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось сохранить профиль.';
+      setProfileError(message);
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -576,7 +612,7 @@ export default function App() {
   }, [routeInfo.distanceKm, form.weight]);
 
   useEffect(() => {
-    if (currentView !== 'courier' || session.profile.role !== 'courier') {
+    if (currentView !== 'courier') {
       return;
     }
 
@@ -621,7 +657,7 @@ export default function App() {
       controller.abort();
       clearInterval(intervalId);
     };
-  }, [currentView, session.profile.courierId, acceptedCourierOrderIds]);
+  }, [currentView, acceptedCourierOrderIds, courierRefreshTick, session.profile.role]);
 
   useEffect(() => {
     if (currentView !== 'courier' || !courierActiveOrder) {
@@ -761,6 +797,10 @@ export default function App() {
     setAuthMode('register');
   };
 
+  const refreshCourierOrders = () => {
+    setCourierRefreshTick((prev) => prev + 1);
+  };
+
   const dashboardView = session.profile.role === 'courier' ? 'courier' : 'order';
   const isCourier = session.profile.role === 'courier';
 
@@ -781,6 +821,9 @@ export default function App() {
                 <span>{session.profile.transportType || 'bicycle'}</span>
               </div>
               <div className="profile-actions">
+                <button type="button" className="profile-btn ghost-btn" onClick={refreshCourierOrders} disabled={courierLoading} title="Обновить биржу заказов">
+                  {courierLoading ? 'Обновляем...' : '↻ Обновить биржу'}
+                </button>
                 <button type="button" className="profile-btn" onClick={handleCourierToggleOnline} disabled={courierLoading}>
                   {courierOnline ? 'Снять с линии' : 'Выйти на линию'}
                 </button>
@@ -801,8 +844,8 @@ export default function App() {
                   <p className="brand-eyebrow">Свободные заказы</p>
                   <h2>Что можно взять в работу</h2>
                 </div>
-                <button type="button" className="link-btn" onClick={handleCourierToggleOnline} disabled={courierLoading}>
-                  {courierOnline ? 'На линии' : 'Включить биржу'}
+                <button type="button" className="link-btn" onClick={refreshCourierOrders} disabled={courierLoading}>
+                  {courierLoading ? 'Обновляем...' : '↻ Обновить'}
                 </button>
               </div>
               <p className="panel-caption">Нажми на заказ, чтобы открыть его на карте, и затем принимай его в работу.</p>
@@ -1425,10 +1468,11 @@ export default function App() {
                 </div>
 
                 <div className="profile-actions stacked">
-                  <button type="submit" className="submit-btn">Сохранить профиль</button>
+                  <button type="submit" className="submit-btn" disabled={profileSaving}>{profileSaving ? 'Сохраняем...' : 'Сохранить профиль'}</button>
                   <button type="button" className="submit-btn ghost" onClick={() => setCurrentView(dashboardView)}>Вернуться к заказам</button>
                 </div>
 
+                {profileError && <p className="api-error">{profileError}</p>}
                 {profileNotice && <p className="success">{profileNotice}</p>}
               </form>
             </article>

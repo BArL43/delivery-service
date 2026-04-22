@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"projectYandexLyceumFinal/internal/handlers"
+	"projectYandexLyceumFinal/internal/middleware"
 	"projectYandexLyceumFinal/internal/observability"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +62,7 @@ func main() {
 	r.GET("/api/geocode/suggest", makeGeocodeSuggestHandler(geocoderBaseURL))
 	r.POST("/api/auth/register", handlers.Register)
 	r.POST("/api/auth/login", handlers.Login)
+	r.PATCH("/api/auth/profile", middleware.AuthMiddleware(), handlers.UpdateProfile)
 
 	logger.Info("auth_service_listening", "service", "auth-service", "port", port)
 	if err := r.Run(":" + port); err != nil {
@@ -408,7 +410,7 @@ func getEnv(key, fallback string) string {
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if c.Request.Method == http.MethodOptions {

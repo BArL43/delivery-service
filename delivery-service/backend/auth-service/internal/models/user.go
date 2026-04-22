@@ -24,6 +24,12 @@ type LoginInput struct {
 	Password string `json:"password" binding:"required,min=8"`
 }
 
+type UpdateProfileInput struct {
+	Name  string `json:"name" binding:"required"`
+	Phone string `json:"phone" binding:"required,min=11,max=15"`
+	Email string `json:"email" binding:"required,email"`
+}
+
 func NewUser(name, phone, email, passwordHash, role string) *User {
 	return &User{
 		Name:         name,

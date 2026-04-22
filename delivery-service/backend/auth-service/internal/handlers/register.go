@@ -3,8 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 	"projectYandexLyceumFinal/internal/models"
 	"projectYandexLyceumFinal/internal/observability"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -103,4 +105,88 @@ func Register(c *gin.Context) {
 		"courier_id":    courierID,
 		"transportType": transportType,
 	})
+}
+
+func UpdateProfile(c *gin.Context) {
+	if db == nil {
+		observability.Stats().ObserveBusiness("profile_update", "failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "База данных не инициализирована"})
+		return
+	}
+
+	userID, ok := c.Get("userId")
+	if !ok {
+		observability.Stats().ObserveBusiness("profile_update", "failure")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Пользователь не авторизован"})
+		return
+	}
+
+	userIDInt, err := parseUserID(userID)
+	if err != nil {
+		observability.Stats().ObserveBusiness("profile_update", "failure")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Некорректный идентификатор пользователя"})
+		return
+	}
+
+	var input models.UpdateProfileInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		observability.Logger().Warn("auth_profile_bind_failed", "error", err)
+		observability.Stats().ObserveBusiness("profile_update", "failure")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверные данные или формат"})
+		return
+	}
+
+	query := `
+		UPDATE users
+		SET name = $1, phone = $2, email = $3, updated_at = NOW()
+		WHERE id = $4
+		RETURNING id, role
+	`
+
+	var updatedID int64
+	var role string
+	err = db.QueryRow(query, strings.TrimSpace(input.Name), strings.TrimSpace(input.Phone), strings.TrimSpace(input.Email), userIDInt).Scan(&updatedID, &role)
+	if err != nil {
+		observability.Logger().Warn("auth_profile_update_failed", "error", err, "user_id", userIDInt)
+		observability.Stats().ObserveBusiness("profile_update", "failure")
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			switch pqErr.Constraint {
+			case "users_email_key":
+				c.JSON(http.StatusConflict, gin.H{"error": "Пользователь с таким email уже существует"})
+				return
+			case "users_phone_key":
+				c.JSON(http.StatusConflict, gin.H{"error": "Пользователь с таким телефоном уже существует"})
+				return
+			default:
+				c.JSON(http.StatusConflict, gin.H{"error": "Пользователь уже существует"})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось обновить профиль"})
+		return
+	}
+
+	observability.Logger().Info("auth_profile_update_success", "user_id", updatedID, "role", role)
+	observability.Stats().ObserveBusiness("profile_update", "success")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Профиль обновлён",
+		"user_id": updatedID,
+		"role":    role,
+	})
+}
+
+func parseUserID(value any) (int64, error) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), nil
+	case int:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case string:
+		return strconv.ParseInt(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("unsupported user id type %T", value)
+	}
 }
