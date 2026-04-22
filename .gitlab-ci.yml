@@ -16,11 +16,7 @@ test_auth_service:
   stage: test
   image: golang:1.26-alpine
   script:
-<<<<<<< HEAD
     - cd backend/auth-service
-=======
-    - cd delivery-service/backend/auth-service
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
     - go test ./...
     - go build ./...
 
@@ -45,57 +41,34 @@ test_frontend:
 
 build_and_push:
   stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
+  image: docker:latest
+  services:
+    - docker:latest-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   before_script:
-    - test -n "$DOCKERHUB_USERNAME" || (echo "DOCKERHUB_USERNAME is empty. Set it in GitLab CI/CD Variables." && exit 1)
-    - test -n "$DOCKERHUB_TOKEN" || (echo "DOCKERHUB_TOKEN is empty. Set Docker Hub Access Token in GitLab CI/CD Variables." && exit 1)
-    - mkdir -p /kaniko/.docker
-    - export DOCKER_AUTH_BASE64="$(printf '%s:%s' "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n\r')"
-    - printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$DOCKER_AUTH_BASE64" > /kaniko/.docker/config.json
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin docker.io
   script:
-<<<<<<< HEAD
-    - /kaniko/executor --context "$CI_PROJECT_DIR/backend/auth-service" --dockerfile "$CI_PROJECT_DIR/backend/auth-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}" --cache=true
-=======
-    - /kaniko/executor --context "$CI_PROJECT_DIR/delivery-service/backend/auth-service" --dockerfile "$CI_PROJECT_DIR/delivery-service/backend/auth-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}" --cache=true
-    - /kaniko/executor --context "$CI_PROJECT_DIR/backend/order-service" --dockerfile "$CI_PROJECT_DIR/backend/order-service/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG}" --cache=true
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
-    - /kaniko/executor --context "$CI_PROJECT_DIR/frontend" --dockerfile "$CI_PROJECT_DIR/frontend/Dockerfile" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}" --cache=true
-    - /kaniko/executor --context "$CI_PROJECT_DIR" --dockerfile "$CI_PROJECT_DIR/Dockerfile.proxy" --destination "docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG}" --cache=true
+    - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG} ./backend/auth-service
+    - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG} ./frontend
+    - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG} -f Dockerfile.proxy .
+    - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}
+    - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}
+    - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG}
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 deploy_to_server:
   stage: deploy
   image: alpine:latest
-  tags:
-    - deploy
-  retry: 2
   before_script:
-    - test -n "$SSH_HOST" || (echo "SSH_HOST is empty. Set it in GitLab CI/CD Variables." && exit 1)
-    - test -n "$SSH_PORT" || (echo "SSH_PORT is empty. Set it in GitLab CI/CD Variables." && exit 1)
-    - test -n "$SSH_USER" || (echo "SSH_USER is empty. Set it in GitLab CI/CD Variables." && exit 1)
-    - test -n "$SSH_PRIVATE_KEY" || (echo "SSH_PRIVATE_KEY is empty. Set it in GitLab CI/CD Variables." && exit 1)
-    - command -v ssh >/dev/null || (echo "ssh client is not installed on the runner host. Install openssh-client." && exit 1)
-    - command -v ssh-keyscan >/dev/null || (echo "ssh-keyscan is not installed on the runner host. Install openssh-client." && exit 1)
+    - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
-    - printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
-    - ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub || (echo "SSH_PRIVATE_KEY is invalid or passphrase-protected." && exit 1)
-    - ssh-keygen -lf ~/.ssh/id_ed25519.pub | awk '{print "CI_private_key_fingerprint", $2}'
-    - ssh-keyscan -t ed25519,rsa,ecdsa -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+    - ssh-keyscan -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
   script:
-<<<<<<< HEAD
-    - ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
-=======
-    - ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "rm -rf /tmp/delivery-service-deploy && mkdir -p /tmp/delivery-service-deploy/delivery-service/backend/auth-service/migrations /tmp/delivery-service-deploy/observability"
-    - scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P $SSH_PORT docker-compose.hub.yml $SSH_USER@$SSH_HOST:/tmp/delivery-service-deploy/docker-compose.hub.yml
-    - scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -P $SSH_PORT docker-compose.observability.yml $SSH_USER@$SSH_HOST:/tmp/delivery-service-deploy/docker-compose.observability.yml
-    - scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -r -P $SSH_PORT delivery-service/backend/auth-service/migrations $SSH_USER@$SSH_HOST:/tmp/delivery-service-deploy/delivery-service/backend/auth-service/
-    - scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -r -P $SSH_PORT observability $SSH_USER@$SSH_HOST:/tmp/delivery-service-deploy/
-    - ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /tmp/delivery-service-deploy && COMPOSE_PROJECT_NAME=delivery-service DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.hub.yml pull && COMPOSE_PROJECT_NAME=delivery-service DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.hub.yml up -d --force-recreate --remove-orphans postgres auth-service order-service frontend nginx && docker rm -f delivery-prometheus delivery-loki delivery-promtail delivery-grafana >/dev/null 2>&1 || true && COMPOSE_PROJECT_NAME=delivery-observability docker compose -f docker-compose.observability.yml up -d --force-recreate --remove-orphans"
-    - ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=ssh-ed25519,ssh-rsa,rsa-sha2-512,rsa-sha2-256 -p $SSH_PORT $SSH_USER@$SSH_HOST "nohup sh -lc 'cd /tmp/delivery-service-deploy && set -e; COMPOSE_PROJECT_NAME=delivery-service DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.hub.yml up osrm-download osrm-init && COMPOSE_PROJECT_NAME=delivery-service DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME IMAGE_TAG=$IMAGE_TAG docker compose -f docker-compose.hub.yml up -d osrm' >/tmp/delivery-service-deploy/osrm-bootstrap.log 2>&1 < /dev/null &"
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
