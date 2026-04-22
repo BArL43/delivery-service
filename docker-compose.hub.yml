@@ -8,7 +8,11 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
+<<<<<<< HEAD
       - ./backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
+=======
+      - ./delivery-service/backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d delivery"]
       interval: 10s
@@ -27,6 +31,22 @@ services:
       postgres:
         condition: service_healthy
 
+<<<<<<< HEAD
+=======
+  order-service:
+    image: ${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG:-latest}
+    container_name: delivery-order-service
+    environment:
+      ORDER_PORT: "8080"
+      ORDER_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
+      PRICING_BASE_RATE: "150"
+      PRICING_PER_KM_RATE: "20"
+      PRICING_PER_KG_RATE: "50"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   frontend:
     image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
     container_name: delivery-frontend
@@ -76,10 +96,25 @@ services:
     depends_on:
       - frontend
       - auth-service
+<<<<<<< HEAD
       - osrm
     ports:
       - "80:80"
+=======
+      - order-service
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
 volumes:
   postgres_data:
   osrm_data:
+<<<<<<< HEAD
+=======
+  caddy_data:
+  caddy_config:
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab

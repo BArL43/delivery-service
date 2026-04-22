@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
+<<<<<<< HEAD
 const (
 	StatusCreated         = "CREATED"
 	StatusSearching       = "SEARCHING_COURIER"
@@ -51,10 +52,17 @@ type Address struct {
 	City      string `json:"city" binding:"required"`
 	Street    string `json:"street" binding:"required"`
 	Building  string `json:"building" binding:"required"`
+=======
+type Address struct {
+	City      string `json:"city"`
+	Street    string `json:"street"`
+	Building  string `json:"building"`
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	Apartment string `json:"apartment"`
 	Comment   string `json:"comment"`
 }
 
+<<<<<<< HEAD
 type Coordinates struct {
 	Latitude  float64 `json:"latitude" binding:"required"`
 	Longitude float64 `json:"longitude" binding:"required"`
@@ -99,17 +107,38 @@ type Order struct {
 }
 
 func NewOrder(userID string, from, to Address, fromCoords, toCoords Coordinates, weight, price float64) Order {
+=======
+type Order struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	FromAddress Address   `json:"from_address"`
+	ToAddress   Address   `json:"to_address"`
+	Weight      float64   `json:"weight"`
+	Price       float64   `json:"price"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func NewOrder(userID string, from, to Address, weight, price float64) Order {
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	now := time.Now()
 	return Order{
 		ID:          uuid.New().String(),
 		UserID:      userID,
 		FromAddress: from,
 		ToAddress:   to,
+<<<<<<< HEAD
 		FromCoords:  fromCoords,
 		ToCoords:    toCoords,
 		Weight:      weight,
 		Price:       price,
 		Status:      "CREATED",
+=======
+		Weight:      weight,
+		Price:       price,
+		Status:      "created",
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

@@ -152,6 +152,48 @@ docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
 - билдит и пушит Docker-образы в Docker Hub;
 - подключается по SSH к серверу и обновляет compose-стек.
 
+<<<<<<< HEAD
+=======
+## Observability
+
+В проект добавлен стек для локального мониторинга и логирования:
+
+- Prometheus собирает метрики из `auth-service` и `order-service`.
+- Loki хранит JSON-логи приложений.
+- Promtail читает Docker logs и отправляет их в Loki.
+- Grafana автоматически подхватывает datasources и дашборды.
+
+### Что нужно сделать
+
+1. Сначала задеплой приложение через CI/CD или вручную обычным compose.
+2. Убедись, что приложение и observability-стек находятся в одной Docker network. По умолчанию это `delivery-service_default`.
+3. Подними observability-стек:
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+```
+
+4. Открой Grafana на `http://<server>:3000`.
+5. Логин по умолчанию: `admin / admin`.
+
+### Доступные дашборды
+
+- `Delivery Infra` - метрики HTTP, задержки, ошибки и активные запросы.
+- `Delivery Business` - регистрация, логин, создание заказов и назначение курьеров.
+
+### Основные метрики
+
+- `delivery_http_requests_total`
+- `delivery_http_request_duration_seconds`
+- `delivery_http_inflight_requests`
+- `delivery_business_events_total`
+
+### Основные запросы Loki
+
+- Все ошибки сервисов: `{service=~"auth-service|order-service"} |= "error"`
+- Бизнес-события: `{service=~"auth-service|order-service"} | json | event != ""`
+
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 ### Настройка в GitLab
 
 В Settings → CI/CD → Variables добавить:

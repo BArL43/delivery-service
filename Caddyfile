@@ -1,8 +1,31 @@
+<<<<<<< HEAD
 :80, :443 {
   tls internal
   encode gzip
 
   handle /api/* {
+=======
+nezy.online, www.nezy.online {
+  encode gzip
+
+  handle /api/v1/* {
+    reverse_proxy order-service:8080
+  }
+
+  handle /orders* {
+    reverse_proxy order-service:8080
+  }
+
+  handle /api/auth/* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /api/geocode* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /api/route* {
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
     reverse_proxy auth-service:8081
   }
 
@@ -10,7 +33,23 @@
     reverse_proxy auth-service:8081
   }
 
+<<<<<<< HEAD
+=======
+  handle /grafana* {
+    reverse_proxy delivery-grafana:3000
+  }
+
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   handle {
     reverse_proxy frontend:80
   }
 }
+<<<<<<< HEAD
+=======
+
+grafana.nezy.online {
+  encode gzip
+
+  reverse_proxy delivery-grafana:3000
+}
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab

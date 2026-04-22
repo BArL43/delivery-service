@@ -1,0 +1,23 @@
+mode: set
+order-service/internal/models/model.go:27.46,29.13 2 0
+order-service/internal/models/model.go:29.13,31.3 1 0
+order-service/internal/models/model.go:32.2,32.33 1 0
+order-service/internal/models/model.go:32.33,33.19 1 0
+order-service/internal/models/model.go:33.19,35.4 1 0
+order-service/internal/models/model.go:37.2,37.14 1 0
+order-service/internal/models/model.go:101.111,116.2 2 0
+order-service/internal/distance/distance.go:9.42,11.2 1 1
+order-service/internal/distance/distance.go:13.64,26.2 9 1
+order-service/internal/pricing/price_calculator.go:17.29,23.2 1 1
+order-service/internal/pricing/price_calculator.go:27.26,30.50 2 1
+order-service/internal/pricing/price_calculator.go:30.50,31.64 1 1
+order-service/internal/pricing/price_calculator.go:31.64,33.4 1 1
+order-service/internal/pricing/price_calculator.go:35.2,35.52 1 1
+order-service/internal/pricing/price_calculator.go:35.52,36.64 1 1
+order-service/internal/pricing/price_calculator.go:36.64,38.4 1 1
+order-service/internal/pricing/price_calculator.go:40.2,40.52 1 1
+order-service/internal/pricing/price_calculator.go:40.52,41.64 1 1
+order-service/internal/pricing/price_calculator.go:41.64,43.4 1 1
+order-service/internal/pricing/price_calculator.go:46.2,46.12 1 1
+order-service/internal/pricing/price_calculator.go:55.44,57.2 1 1
+order-service/internal/pricing/price_calculator.go:62.70,72.2 3 1

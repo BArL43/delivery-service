@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+<<<<<<< HEAD
 	"fmt"
 	"net/http"
 	"order-service/internal/models"
@@ -18,6 +19,23 @@ type CreateOrderRequest struct {
 	FromCoords  models.Coordinates `json:"from_coords"`
 	ToCoords    models.Coordinates `json:"to_coords"`
 	Weight      float64            `json:"weight"`
+=======
+	"net/http"
+	"strings"
+
+	"order-service/internal/models"
+	"order-service/internal/observability"
+	"order-service/internal/pricing"
+	"order-service/internal/storage"
+)
+
+type CreateOrderRequest struct {
+	FromAddress models.Address `json:"from_address"`
+	ToAddress   models.Address `json:"to_address"`
+	Weight      float64        `json:"weight"`
+	DistanceKm  float64        `json:"distance_km"`
+	UserID      string         `json:"user_id"`
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }
 
 type OrdersHandler struct {
@@ -33,6 +51,7 @@ func NewOrdersHandler(repo storage.OrderRepository, calc *pricing.Calculator) *O
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 	userID, ok := r.Context().Value("userID").(string)
 	if !ok {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
@@ -66,10 +85,50 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resp)
+=======
+	var req CreateOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("order_create_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("order_create", "failure")
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Generate default user_id if not provided
+	userID := req.UserID
+	if userID == "" {
+		userID = "00000000-0000-0000-0000-000000000000"
+	}
+
+	// Calculate price server-side based on weight and route distance
+	price := h.calc.Calculate(req.DistanceKm, req.Weight)
+
+	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.Weight, price)
+	if err := h.repo.Create(r.Context(), order); err != nil {
+		observability.Logger().Error("order_create_failed", "error", err, "user_id", userID, "price", price)
+		observability.Stats().ObserveBusiness("order_create", "failure")
+		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
+		return
+	}
+
+	observability.Logger().Info("order_created",
+		"order_id", order.ID,
+		"user_id", userID,
+		"price", price,
+		"weight", req.Weight,
+		"distance_km", req.DistanceKm,
+	)
+	observability.Stats().ObserveBusiness("order_create", "success")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(order)
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }
 
 // GET /orders/{id} - Get one
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 	userId, ok := r.Context().Value("userID").(string)
 	if !ok {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
@@ -83,11 +142,18 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	order, err := h.repo.GetByID(r.Context(), orderId, userId)
+=======
+	id := strings.TrimPrefix(r.URL.Path, "/orders/")
+	id = strings.TrimSuffix(id, "/")
+
+	order, err := h.repo.GetByID(r.Context(), id)
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	if err != nil {
 		http.Error(w, `{"error": "not found"}`, http.StatusNotFound)
 		return
 	}
 
+<<<<<<< HEAD
 	resp := models.OrderResponse{
 		OrderId:           order.ID,
 		InitialStatus:     order.Status,
@@ -98,10 +164,15 @@ func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+=======
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(order)
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }
 
 // GET /orders/{id} - Get all
 func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
+<<<<<<< HEAD
 	userID, ok := r.Context().Value("userID").(string)
 	if !ok {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
@@ -123,11 +194,15 @@ func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orders, total, err := h.repo.List(r.Context(), userID, status, page, limit, sort)
+=======
+	orders, err := h.repo.List(r.Context())
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	if err != nil {
 		http.Error(w, `{"error": "failed to list orders"}`, http.StatusInternalServerError)
 		return
 	}
 
+<<<<<<< HEAD
 	var items []models.OrderResponse
 	for _, order := range orders {
 		items = append(items, models.OrderResponse{
@@ -194,4 +269,8 @@ func (h *OrdersHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+=======
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(orders)
+>>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }

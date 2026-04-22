@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: delivery-postgres
+    environment:
+      POSTGRES_DB: delivery
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d delivery"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    image: ${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG:-latest}
+    container_name: delivery-auth-service
+    environment:
+      AUTH_PORT: "8081"
+      AUTH_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
+      JWT_SECRET: dev-secret-change-me
+      OSRM_BASE_URL: http://osrm:5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
+    container_name: delivery-frontend
+
+  osrm-download:
+    image: curlimages/curl:8.8.0
+    container_name: delivery-osrm-download
+    restart: "no"
+    user: "0:0"
+    command: >
+      sh -lc "if [ ! -f /data/central-fed-district-latest.osm.pbf ]; then
+      curl -L --retry 5 --retry-delay 3 -o /data/central-fed-district-latest.osm.pbf https://download.geofabrik.de/russia/central-fed-district-latest.osm.pbf;
+      else echo 'OSRM source already downloaded'; fi"
+    volumes:
+      - osrm_data:/data
+
+  osrm-init:
+    image: osrm/osrm-backend:latest
+    container_name: delivery-osrm-init
+    restart: "no"
+    user: "0:0"
+    command: >
+      sh -lc "if [ ! -f /data/central-fed-district-latest.osrm ]; then
+      osrm-extract -p /opt/car.lua /data/central-fed-district-latest.osm.pbf &&
+      osrm-partition /data/central-fed-district-latest.osrm &&
+      osrm-customize /data/central-fed-district-latest.osrm;
+      else echo 'OSRM graph already prepared'; fi"
+    volumes:
+      - osrm_data:/data
+    depends_on:
+      osrm-download:
+        condition: service_completed_successfully
+
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: delivery-osrm
+    command: osrm-routed --algorithm mld /data/central-fed-district-latest.osrm
+    volumes:
+      - osrm_data:/data
+    depends_on:
+      osrm-init:
+        condition: service_completed_successfully
+
+  nginx:
+    image: ${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG:-latest}
+    container_name: delivery-nginx
+    depends_on:
+      - frontend
+      - auth-service
+      - osrm
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  osrm_data:
+  caddy_data:
+  caddy_config:

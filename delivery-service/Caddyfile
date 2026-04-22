@@ -1,0 +1,31 @@
+nezy.online, www.nezy.online {
+  encode gzip
+
+  handle /api/v1/* {
+    reverse_proxy order-service:8080
+  }
+
+  handle /orders* {
+    reverse_proxy order-service:8080
+  }
+
+  handle /api/auth/* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /api/geocode* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /api/route* {
+    reverse_proxy auth-service:8081
+  }
+
+  handle /health {
+    reverse_proxy auth-service:8081
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
+}
