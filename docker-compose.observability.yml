@@ -62,6 +62,7 @@ services:
       - loki
     networks:
       - default
+      - delivery-app
 
 volumes:
   prometheus_data:

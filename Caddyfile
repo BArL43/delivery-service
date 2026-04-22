@@ -29,3 +29,9 @@ nezy.online, www.nezy.online {
     reverse_proxy frontend:80
   }
 }
+
+grafana.nezy.online {
+  encode gzip
+
+  reverse_proxy delivery-grafana:3000
+}
