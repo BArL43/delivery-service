@@ -88,6 +88,17 @@ func (m *mockAssignmentRepo) UpdateStatus(ctx context.Context, orderID string, n
 	return m.updateErr
 }
 
+type mockOrderRepo struct {
+	updateErr error
+}
+
+func (m *mockOrderRepo) Create(ctx context.Context, order models.Order) error { return nil }
+func (m *mockOrderRepo) GetByID(ctx context.Context, id string) (*models.Order, error) { return nil, nil }
+func (m *mockOrderRepo) List(ctx context.Context) ([]models.Order, error) { return nil, nil }
+func (m *mockOrderRepo) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
+	return m.updateErr
+}
+
 // --- Tests ---
 
 func TestToggleAvailability(t *testing.T) {
@@ -167,7 +178,7 @@ func TestAssignOrder_ManualMode(t *testing.T) {
 	h := NewCourierHandler(
 		&mockCourierRepo{courier: courier},
 		&mockAssignmentRepo{},
-		nil,
+		&mockOrderRepo{},
 	)
 	body := `{"courier_id":"courier-1","mode":"manual"}`
 	req := httptest.NewRequest("POST", "/orders/order-1/assign", strings.NewReader(body))
@@ -190,7 +201,7 @@ func TestAssignOrder_AutoMode_NoAvailable(t *testing.T) {
 	h := NewCourierHandler(
 		&mockCourierRepo{available: []models.Courier{}},
 		&mockAssignmentRepo{},
-		nil,
+		&mockOrderRepo{},
 	)
 	body := `{"mode":"auto"}`
 	req := httptest.NewRequest("POST", "/orders/order-1/assign", strings.NewReader(body))

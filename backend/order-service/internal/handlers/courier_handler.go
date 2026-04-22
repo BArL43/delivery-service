@@ -284,6 +284,13 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.orderRepo.UpdateStatus(r.Context(), orderId, "assigned"); err != nil {
+		observability.Logger().Error("courier_assign_order_status_failed", "error", err, "order_id", orderId, "courier_id", courierID)
+		observability.Stats().ObserveBusiness("courier_assign", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to mark order as assigned")
+		return
+	}
+
 	// Get courier for ETA calculation
 	courier, err := h.courierRepo.GetByID(r.Context(), courierID)
 	if err != nil {

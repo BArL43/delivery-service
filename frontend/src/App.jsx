@@ -13,9 +13,24 @@ const PRICING = {
   PER_KG_RATE: 50,
 };
 
-const computePrice = (distanceKm, weightKg) => {
+const buildPriceBreakdown = (distanceKm, weightKg) => {
   const distanceBilled = Math.ceil(distanceKm);
-  return Math.round((PRICING.BASE_RATE + distanceBilled * PRICING.PER_KM_RATE + weightKg * PRICING.PER_KG_RATE) * 100) / 100;
+  const base = PRICING.BASE_RATE;
+  const distanceCharge = distanceBilled * PRICING.PER_KM_RATE;
+  const weightCharge = weightKg * PRICING.PER_KG_RATE;
+  const total = Math.round((base + distanceCharge + weightCharge) * 100) / 100;
+
+  return {
+    base,
+    distanceBilled,
+    distanceCharge,
+    weightCharge,
+    total,
+  };
+};
+
+const computePrice = (distanceKm, weightKg) => {
+  return buildPriceBreakdown(distanceKm, weightKg).total;
 };
 
 const INITIAL_ORDERS = [
@@ -227,6 +242,12 @@ export default function App() {
     distanceKm: null,
     durationMin: null,
     geometry: [],
+    error: '',
+  });
+  const [formRouteInfo, setFormRouteInfo] = useState({
+    loading: false,
+    distanceKm: null,
+    durationMin: null,
     error: '',
   });
   const [mapEditTarget, setMapEditTarget] = useState('from');
@@ -736,15 +757,73 @@ export default function App() {
     };
   }, [activeOrder]);
 
+  useEffect(() => {
+    const fromCoords = parseCoords(form.fromCoords);
+    const toCoords = parseCoords(form.toCoords);
+
+    if (!fromCoords || !toCoords) {
+      setFormRouteInfo({ loading: false, distanceKm: null, durationMin: null, error: '' });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadFormRoute = async () => {
+      setFormRouteInfo({ loading: true, distanceKm: null, durationMin: null, error: '' });
+
+      try {
+        const query = new URLSearchParams({
+          fromLat: String(fromCoords[0]),
+          fromLon: String(fromCoords[1]),
+          toLat: String(toCoords[0]),
+          toLon: String(toCoords[1]),
+        });
+
+        const response = await fetch(`/api/route?${query.toString()}`, { signal: controller.signal });
+        if (!response.ok) {
+          const responseText = await response.text();
+          throw new Error(responseText || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!Number.isFinite(data.distance) || !Number.isFinite(data.duration)) {
+          throw new Error('Маршрут не найден');
+        }
+
+        setFormRouteInfo({
+          loading: false,
+          distanceKm: Number((data.distance / 1000).toFixed(1)),
+          durationMin: Math.max(1, Math.round(data.duration / 60)),
+          error: '',
+        });
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          return;
+        }
+
+        setFormRouteInfo({
+          loading: false,
+          distanceKm: null,
+          durationMin: null,
+          error: 'Сначала рассчитай маршрут по точкам A и B.',
+        });
+      }
+    };
+
+    loadFormRoute();
+
+    return () => controller.abort();
+  }, [form.fromCoords, form.toCoords]);
+
   // Compute price preview when distance and weight change
   useEffect(() => {
-    if (routeInfo.distanceKm === null) {
+    if (formRouteInfo.distanceKm === null) {
       setComputedPrice(null);
       return;
     }
     const weight = parseFloat(form.weight) || 0;
-    setComputedPrice(computePrice(routeInfo.distanceKm, weight));
-  }, [routeInfo.distanceKm, form.weight]);
+    setComputedPrice(computePrice(formRouteInfo.distanceKm, weight));
+  }, [formRouteInfo.distanceKm, form.weight]);
 
   useEffect(() => {
     if (currentView !== 'courier') {
@@ -1442,6 +1521,11 @@ export default function App() {
       return;
     }
 
+    if (formRouteInfo.distanceKm === null) {
+      setFormError(formRouteInfo.error || 'Сначала рассчитай маршрут по точкам A и B.');
+      return;
+    }
+
     const fromCoords = parseCoords(form.fromCoords) || DEFAULT_FROM_COORDS;
     const toCoords = parseCoords(form.toCoords) || DEFAULT_TO_COORDS;
 
@@ -1462,7 +1546,7 @@ export default function App() {
         comment: '',
       },
       weight: parseFloat(form.weight) || 0,
-      distance_km: routeInfo.distanceKm || 0,
+      distance_km: formRouteInfo.distanceKm || 0,
       user_id: '00000000-0000-0000-0000-000000000000',
     };
 
@@ -1490,7 +1574,7 @@ export default function App() {
         fromCoords: fromCoords,
         toCoords: toCoords,
         status: 'Создан',
-        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+        eta: `${Math.max(1, Math.round(formRouteInfo.durationMin || (12 + Math.random() * 20)))} мин`,
         price: createdOrder.price,
         weight: createdOrder.weight,
       };
@@ -1518,7 +1602,9 @@ export default function App() {
         fromCoords: fromCoords,
         toCoords: toCoords,
         status: 'Создан',
-        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+        eta: `${Math.max(1, Math.round(formRouteInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+        price: computedPrice ?? computePrice(formRouteInfo.distanceKm, parseFloat(form.weight) || 0),
+        weight: parseFloat(form.weight) || 0,
       };
       setOrders((prev) => [order, ...prev]);
       setActiveOrderId(order.id);
@@ -1881,10 +1967,10 @@ export default function App() {
                 </div>
               </div>
 
-              {routeInfo.distanceKm !== null && (
+              {formRouteInfo.distanceKm !== null && (
                 <div className="price-preview">
                   <p>
-                    Дистанция: <strong>{routeInfo.distanceKm} км</strong>
+                    Дистанция: <strong>{formRouteInfo.distanceKm} км</strong>
                     {form.weight && parseFloat(form.weight) > 0 && (
                       <>
                         {' '}
@@ -1895,8 +1981,23 @@ export default function App() {
                   <p className="price-value">
                     Стоимость доставки: <strong>{computedPrice !== null ? computedPrice + '₽' : 'рассчитывается...'}</strong>
                   </p>
+                  {computedPrice !== null && (
+                    <div className="price-breakdown">
+                      <span>База: {PRICING.BASE_RATE}₽</span>
+                      <span>
+                        Дистанция: {Math.ceil(formRouteInfo.distanceKm)} км × {PRICING.PER_KM_RATE}₽
+                      </span>
+                      <span>
+                        Вес: {(parseFloat(form.weight) || 0).toFixed(1)} кг × {PRICING.PER_KG_RATE}₽
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
+              {formRouteInfo.loading && <p className="field-hint">Считаем маршрут и цену для этого заказа...</p>}
+              {formRouteInfo.error && <p className="api-error">{formRouteInfo.error}</p>}
+              {formRouteInfo.loading && <p className="field-hint">Считаем маршрут и цену для этого заказа...</p>}
+              {formRouteInfo.error && <p className="api-error">{formRouteInfo.error}</p>}
 
               <div className="field-row">
                 <div className="field">
@@ -2043,6 +2144,17 @@ export default function App() {
                     {activeOrder.price}₽
                   </span>
                 </p>
+              )}
+              {routeInfo.distanceKm !== null && activeOrder?.weight !== undefined && (
+                <div className="price-breakdown">
+                  <span>База: {PRICING.BASE_RATE}₽</span>
+                  <span>
+                    Дистанция: {Math.ceil(routeInfo.distanceKm)} км × {PRICING.PER_KM_RATE}₽
+                  </span>
+                  <span>
+                    Вес: {Number(activeOrder.weight || 0).toFixed(1)} кг × {PRICING.PER_KG_RATE}₽
+                  </span>
+                </div>
               )}
               {activeOrder?.weight && (
                 <p>

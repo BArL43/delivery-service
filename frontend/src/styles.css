@@ -402,6 +402,18 @@ body {
   font-size: 13px;
 }
 
+.price-breakdown {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 42, 55, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
 .field-hint {
   margin: -2px 0 0;
   color: var(--text-subtle);
