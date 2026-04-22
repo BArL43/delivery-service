@@ -132,6 +132,17 @@ func main() {
 func ensureCourierSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	statements := []string{
 		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
+		`CREATE TABLE IF NOT EXISTS orders (
+		id UUID PRIMARY KEY,
+		user_id UUID NOT NULL,
+		from_address JSONB NOT NULL,
+		to_address JSONB NOT NULL,
+		weight DECIMAL(10,2) NOT NULL DEFAULT 0,
+		price DECIMAL(12,2) NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'created',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight DECIMAL(10,2) NOT NULL DEFAULT 0`,
 		`CREATE TABLE IF NOT EXISTS couriers (
 		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
