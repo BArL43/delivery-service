@@ -405,20 +405,21 @@ func (h *CourierHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Reques
 		}
 
 		courier, courierErr := h.courierRepo.GetByID(r.Context(), req.CourierID)
-		if courierErr != nil {
-			observability.Logger().Warn("courier_order_status_courier_lookup_failed", "error", courierErr, "order_id", orderId, "courier_id", req.CourierID)
-			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-			jsonError(w, http.StatusNotFound, "assignment not found")
-			return
-		}
-
-		if courier.ActiveOrderID == nil || *courier.ActiveOrderID != orderId {
-			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-			jsonError(w, http.StatusNotFound, "assignment not found")
-			return
+		if courierErr != nil || courier.ActiveOrderID == nil || *courier.ActiveOrderID != orderId {
+			fallbackCourier, fallbackErr := h.courierRepo.GetByActiveOrderID(r.Context(), orderId)
+			if fallbackErr != nil {
+				observability.Logger().Warn("courier_order_status_courier_lookup_failed", "error", fallbackErr, "order_id", orderId, "courier_id", req.CourierID)
+				observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+				jsonError(w, http.StatusNotFound, "assignment not found")
+				return
+			}
+			courier = fallbackCourier
 		}
 
 		repaired := models.NewAssignment(orderId, req.CourierID, 0)
+		if courier != nil {
+			repaired.CourierID = courier.ID
+		}
 		if createErr := h.assignmentRepo.Create(r.Context(), repaired); createErr != nil {
 			observability.Logger().Warn("courier_order_status_assignment_repair_failed", "error", createErr, "order_id", orderId, "courier_id", req.CourierID)
 			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")

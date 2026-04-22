@@ -13,9 +13,10 @@ FROM alpine:3.20
 
 RUN adduser -D appuser
 
-COPY --from-builder /bin/order-service /usr/local/bin/order-service
+COPY --from=builder /bin/order-service /usr/local/bin/order-service
 
 USER appuser
 EXPOSE 8080
 
 CMD ["order-service"]
+
