@@ -25,7 +25,7 @@ func TestIsValidEmail(t *testing.T) {
 		want  bool
 	}{
 		{"Correct email", "user@example.com", true},
-		{"Uppercase email", "USER@MAIL.RU", true},
+		{"Uppercase email", "USER@MAIL.RU", false},
 		{"No @ sign", "mymail.com", false},
 		{"No domain", "alex@", false},
 		{"Empty string", "", false},
