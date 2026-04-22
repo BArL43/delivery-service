@@ -220,30 +220,30 @@ func seedDemoOrders(ctx context.Context, orderRepo storage.OrderRepository, pric
 	}
 
 	demoOrders := []struct {
-		from    models.Address
-		to      models.Address
-		weight  float64
+		from     models.Address
+		to       models.Address
+		weight   float64
 		distance float64
-		status  string
+		status   string
 	}{
 		{
-			from: models.Address{City: "Москва", Street: "Тверская 14"},
-			to: models.Address{City: "Москва", Street: "Ленинский проспект 30"},
+			from:   models.Address{City: "Москва", Street: "Тверская 14"},
+			to:     models.Address{City: "Москва", Street: "Ленинский проспект 30"},
 			weight: 1.5, distance: 5.2, status: "created",
 		},
 		{
-			from: models.Address{City: "Москва", Street: "Арбат 7"},
-			to: models.Address{City: "Москва", Street: "Парк Победы 1"},
+			from:   models.Address{City: "Москва", Street: "Арбат 7"},
+			to:     models.Address{City: "Москва", Street: "Парк Победы 1"},
 			weight: 2.1, distance: 8.4, status: "SEARCHING_COURIER",
 		},
 		{
-			from: models.Address{City: "Москва", Street: "Проспект Мира 102"},
-			to: models.Address{City: "Москва", Street: "Кутузовский проспект 45"},
+			from:   models.Address{City: "Москва", Street: "Проспект Мира 102"},
+			to:     models.Address{City: "Москва", Street: "Кутузовский проспект 45"},
 			weight: 0.8, distance: 11.7, status: "COURIER_ASSIGNED",
 		},
 		{
-			from: models.Address{City: "Москва", Street: "Садовая-Самотечная 7"},
-			to: models.Address{City: "Москва", Street: "Новая Басманная 12"},
+			from:   models.Address{City: "Москва", Street: "Садовая-Самотечная 7"},
+			to:     models.Address{City: "Москва", Street: "Новая Басманная 12"},
 			weight: 3.0, distance: 4.6, status: "PICKED_UP",
 		},
 	}
