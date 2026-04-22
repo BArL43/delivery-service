@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"order-service/internal/models"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // --- Mock repositories ---
@@ -72,7 +74,7 @@ func (m *mockAssignmentRepo) Create(ctx context.Context, a models.Assignment) er
 }
 func (m *mockAssignmentRepo) GetByOrderID(ctx context.Context, orderID string) (*models.Assignment, error) {
 	if m.byOrder == nil {
-		return nil, nil
+		return nil, pgx.ErrNoRows
 	}
 	c := *m.byOrder
 	return &c, nil
@@ -253,6 +255,34 @@ func TestGetActiveOrder(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["order_id"] != "order-1" {
 		t.Errorf("expected order_id=order-1, got %v", resp["order_id"])
+	}
+}
+
+func TestUpdateOrderStatus_RecreatesMissingAssignment(t *testing.T) {
+	orderID := "order-1"
+	courierID := "courier-1"
+	courier := &models.Courier{ID: courierID}
+	courier.ActiveOrderID = &orderID
+
+	h := NewCourierHandler(
+		&mockCourierRepo{courier: courier},
+		&mockAssignmentRepo{},
+		&mockOrderRepo{},
+	)
+	body := `{"courier_id":"courier-1","status":"at_pickup"}`
+	req := httptest.NewRequest("PATCH", "/api/v1/orders/order-1/status", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.UpdateOrderStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "at_pickup" {
+		t.Fatalf("expected status=at_pickup, got %v", resp["status"])
 	}
 }
 

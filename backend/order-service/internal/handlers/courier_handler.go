@@ -397,10 +397,36 @@ func (h *CourierHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Reques
 
 	assignment, err := h.assignmentRepo.GetByOrderID(r.Context(), orderId)
 	if err != nil {
-		observability.Logger().Warn("courier_order_status_assignment_missing", "error", err, "order_id", orderId)
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusNotFound, "assignment not found")
-		return
+		if !errors.Is(err, pgx.ErrNoRows) {
+			observability.Logger().Warn("courier_order_status_assignment_lookup_failed", "error", err, "order_id", orderId)
+			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+			jsonError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+
+		courier, courierErr := h.courierRepo.GetByID(r.Context(), req.CourierID)
+		if courierErr != nil {
+			observability.Logger().Warn("courier_order_status_courier_lookup_failed", "error", courierErr, "order_id", orderId, "courier_id", req.CourierID)
+			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+			jsonError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+
+		if courier.ActiveOrderID == nil || *courier.ActiveOrderID != orderId {
+			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+			jsonError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+
+		repaired := models.NewAssignment(orderId, req.CourierID, 0)
+		if createErr := h.assignmentRepo.Create(r.Context(), repaired); createErr != nil {
+			observability.Logger().Warn("courier_order_status_assignment_repair_failed", "error", createErr, "order_id", orderId, "courier_id", req.CourierID)
+			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+			jsonError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+
+		assignment = &repaired
 	}
 	if assignment.CourierID != req.CourierID {
 		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
