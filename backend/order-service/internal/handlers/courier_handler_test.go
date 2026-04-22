@@ -93,7 +93,9 @@ type mockOrderRepo struct {
 }
 
 func (m *mockOrderRepo) Create(ctx context.Context, order models.Order) error { return nil }
-func (m *mockOrderRepo) GetByID(ctx context.Context, id string) (*models.Order, error) { return nil, nil }
+func (m *mockOrderRepo) GetByID(ctx context.Context, id string) (*models.Order, error) {
+	return nil, nil
+}
 func (m *mockOrderRepo) List(ctx context.Context) ([]models.Order, error) { return nil, nil }
 func (m *mockOrderRepo) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
 	return m.updateErr
