@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -48,12 +49,12 @@ func (r *PostgresAssignmentRepository) Create(ctx context.Context, a models.Assi
 
 func (r *PostgresAssignmentRepository) GetByOrderID(ctx context.Context, orderID string) (*models.Assignment, error) {
 	query := `
-		SELECT id, order_id, courier_id, status, eta_to_pickup, picked_up_at, delivered_at, created_at, updated_at
+		SELECT id, order_id, courier_id, status, eta_to_pickup::text, picked_up_at, delivered_at, created_at, updated_at
 		FROM assignments
 		WHERE order_id = $1
 	`
 	var a models.Assignment
-	var etaStr *string
+	var etaStr sql.NullString
 	var pickedUpAt, deliveredAt *time.Time
 
 	err := r.pool.QueryRow(ctx, query, orderID).Scan(
@@ -71,8 +72,8 @@ func (r *PostgresAssignmentRepository) GetByOrderID(ctx context.Context, orderID
 		return nil, fmt.Errorf("failed to get assignment by order id: %w", err)
 	}
 
-	if etaStr != nil {
-		eta, err := time.ParseDuration(*etaStr)
+	if etaStr.Valid {
+		eta, err := time.ParseDuration(etaStr.String)
 		if err == nil {
 			a.ETAToPickup = &eta
 		}
@@ -85,14 +86,14 @@ func (r *PostgresAssignmentRepository) GetByOrderID(ctx context.Context, orderID
 
 func (r *PostgresAssignmentRepository) GetActiveByCourierID(ctx context.Context, courierID string) (*models.Assignment, error) {
 	query := `
-		SELECT id, order_id, courier_id, status, eta_to_pickup, picked_up_at, delivered_at, created_at, updated_at
+		SELECT id, order_id, courier_id, status, eta_to_pickup::text, picked_up_at, delivered_at, created_at, updated_at
 		FROM assignments
 		WHERE courier_id = $1 AND status IN ('assigned', 'accepted', 'at_pickup', 'in_progress')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
 	var a models.Assignment
-	var etaStr *string
+	var etaStr sql.NullString
 	var pickedUpAt, deliveredAt *time.Time
 
 	err := r.pool.QueryRow(ctx, query, courierID).Scan(
@@ -110,8 +111,8 @@ func (r *PostgresAssignmentRepository) GetActiveByCourierID(ctx context.Context,
 		return nil, fmt.Errorf("failed to get active assignment by courier id: %w", err)
 	}
 
-	if etaStr != nil {
-		eta, err := time.ParseDuration(*etaStr)
+	if etaStr.Valid {
+		eta, err := time.ParseDuration(etaStr.String)
 		if err == nil {
 			a.ETAToPickup = &eta
 		}
