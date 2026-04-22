@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
 
-const STATUS_FLOW = ['Создан', 'Курьер в пути', 'Забран у отправителя', 'Доставлен'];
+const STATUS_FLOW = ['Создан', 'Курьер назначен', 'Забран у отправителя', 'Курьер в пути', 'Доставлен'];
 const STORAGE_TOKEN_KEY = 'delivery_token';
 const STORAGE_PROFILE_KEY = 'delivery_profile';
 const STORAGE_COURIER_ACCEPTED_KEY = 'delivery_courier_accepted_orders';
@@ -42,16 +42,35 @@ const INITIAL_ORDERS = [
 const DEFAULT_FROM_COORDS = [55.7558, 37.6176];
 const DEFAULT_TO_COORDS = [55.706, 37.5895];
 const ORDER_STATUS_LABELS = {
-  created: 'Ожидает курьера',
+  created: 'Создан',
+  assigned: 'Курьер назначен',
+  at_pickup: 'Забран у отправителя',
+  in_progress: 'Курьер в пути',
+  delivered: 'Доставлен',
+  cancelled: 'Отменён',
   SEARCHING_COURIER: 'Ищем курьера',
   COURIER_ASSIGNED: 'Курьер назначен',
   PICKED_UP: 'Забран',
   DELIVERED: 'Доставлен',
-  cancelled: 'Отменён',
   Создан: 'Создан',
   'Курьер в пути': 'Курьер в пути',
   'Забран у отправителя': 'Забран у отправителя',
   'Доставлен': 'Доставлен',
+};
+
+const COURIER_STATUS_NEXT_ACTIONS = {
+  'Курьер назначен': {
+    status: 'at_pickup',
+    label: 'Отметить как забран',
+  },
+  'Забран у отправителя': {
+    status: 'in_progress',
+    label: 'Отметить как в пути',
+  },
+  'Курьер в пути': {
+    status: 'delivered',
+    label: 'Отметить доставленным',
+  },
 };
 
 const formatOrderStatus = (status) => ORDER_STATUS_LABELS[status] || status || '—';
@@ -76,6 +95,8 @@ const parseCoords = (value) => {
 };
 
 const routeToEta = (seconds) => `${Math.max(1, Math.round(seconds / 60))} мин`;
+
+const getCourierNextAction = (status) => COURIER_STATUS_NEXT_ACTIONS[status] || null;
 
 const buildAddressLabel = (address) => {
   if (!address) {
@@ -212,10 +233,15 @@ export default function App() {
   const [mapExpanded, setMapExpanded] = useState(false);
   const [geoStatus, setGeoStatus] = useState({ loading: false, error: '' });
   const [addressSuggestions, setAddressSuggestions] = useState({ from: [], to: [] });
+  const ordersRef = useRef(orders);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_COURIER_ACCEPTED_KEY, JSON.stringify(acceptedCourierOrderIds));
   }, [acceptedCourierOrderIds]);
+
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -232,7 +258,18 @@ export default function App() {
           return;
         }
 
-        const mappedOrders = data.map(normalizeBackendOrder);
+        const previousOrders = new Map(ordersRef.current.map((order) => [order.id, order]));
+        const mappedOrders = data.map((backendOrder) => {
+          const order = normalizeBackendOrder(backendOrder);
+          const previousOrder = previousOrders.get(order.id);
+
+          return {
+            ...order,
+            fromCoords: order.fromCoords || previousOrder?.fromCoords || null,
+            toCoords: order.toCoords || previousOrder?.toCoords || null,
+          };
+        });
+
         const enrichedOrders = await Promise.all(
           mappedOrders.map(async (order) => {
             if (order.fromCoords && order.toCoords) {
@@ -265,23 +302,39 @@ export default function App() {
     };
 
     loadBackendOrders();
+    const intervalId = setInterval(loadBackendOrders, 15000);
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      clearInterval(intervalId);
+    };
   }, []);
 
   const clientActiveOrder = useMemo(
     () => orders.find((order) => order.id === activeOrderId) ?? orders[0],
     [orders, activeOrderId],
   );
+  const courierMyOrders = useMemo(
+    () =>
+      orders.filter((order) =>
+        ['Курьер назначен', 'Забран у отправителя', 'Курьер в пути', 'Доставлен'].includes(order.status),
+      ),
+    [orders],
+  );
   const courierActiveOrder = useMemo(
-    () => courierOrders.find((order) => order.id === courierActiveOrderId) ?? courierOrders[0],
-    [courierOrders, courierActiveOrderId],
+    () =>
+      courierMyOrders.find((order) => order.id === courierActiveOrderId)
+      || courierOrders.find((order) => order.id === courierActiveOrderId)
+      || orders.find((order) => order.id === courierActiveOrderId)
+      || courierMyOrders[0]
+      || courierOrders[0],
+    [courierMyOrders, courierOrders, courierActiveOrderId, orders],
   );
   const activeOrder = currentView === 'courier' ? courierActiveOrder : clientActiveOrder;
 
   const activeStep = STATUS_FLOW.indexOf(activeOrder?.status || STATUS_FLOW[0]);
   const completedOrders = orders.filter((order) => order.status === 'Доставлен').length;
-  const inProgressOrders = orders.filter((order) => order.status !== 'Доставлен').length;
+  const inProgressOrders = orders.filter((order) => !['Доставлен', 'Отменён'].includes(order.status)).length;
   const recentOrders = orders.slice(0, 3);
   const mapCenter = useMemo(() => {
     const from = activeOrder?.fromCoords || DEFAULT_FROM_COORDS;
@@ -341,6 +394,60 @@ export default function App() {
     const nextProfile = { ...session.profile, courierId };
     updateSession({ ...session, profile: nextProfile });
     return courierId;
+  };
+
+  const syncOrdersFromBackend = async () => {
+    try {
+      const response = await fetch('/api/v1/orders');
+      if (!response.ok) {
+        return ordersRef.current;
+      }
+
+      const data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        return ordersRef.current;
+      }
+
+      const previousOrders = new Map(ordersRef.current.map((order) => [order.id, order]));
+      const mappedOrders = data.map((backendOrder) => {
+        const order = normalizeBackendOrder(backendOrder);
+        const previousOrder = previousOrders.get(order.id);
+
+        return {
+          ...order,
+          fromCoords: order.fromCoords || previousOrder?.fromCoords || null,
+          toCoords: order.toCoords || previousOrder?.toCoords || null,
+        };
+      });
+
+      const enrichedOrders = await Promise.all(
+        mappedOrders.map(async (order) => {
+          if (order.fromCoords && order.toCoords) {
+            return order;
+          }
+
+          const fromLabel = order.fromAddress ? buildAddressLabel(order.fromAddress) : order.from;
+          const toLabel = order.toAddress ? buildAddressLabel(order.toAddress) : order.to;
+
+          try {
+            const [fromCoords, toCoords] = await Promise.all([
+              order.fromCoords ? Promise.resolve(order.fromCoords) : geocodeAddress(fromLabel),
+              order.toCoords ? Promise.resolve(order.toCoords) : geocodeAddress(toLabel),
+            ]);
+
+            return { ...order, fromCoords, toCoords };
+          } catch {
+            return order;
+          }
+        }),
+      );
+
+      setOrders(enrichedOrders);
+      setActiveOrderId((prev) => (enrichedOrders.some((order) => order.id === prev) ? prev : enrichedOrders[0]?.id || ''));
+      return enrichedOrders;
+    } catch (_error) {
+      return ordersRef.current;
+    }
   };
 
   const readResponseError = async (response) => {
@@ -659,9 +766,9 @@ export default function App() {
         const data = await response.json();
         const availableOrders = Array.isArray(data)
           ? data
-              .filter((order) => !['DELIVERED', 'Доставлен', 'cancelled', 'Отменён'].includes(order.status))
-              .filter((order) => !acceptedCourierOrderIds.includes(order.id))
-              .map(normalizeBackendOrder)
+            .map(normalizeBackendOrder)
+            .filter((order) => !['Курьер назначен', 'Забран у отправителя', 'Курьер в пути', 'Доставлен', 'Отменён'].includes(order.status))
+            .filter((order) => !acceptedCourierOrderIds.includes(order.id))
           : [];
 
         setCourierOrders(availableOrders);
@@ -836,10 +943,14 @@ export default function App() {
       }
 
       const result = await response.json();
+      const nextStatus = formatOrderStatus('assigned');
       setCourierOrders((prev) =>
+        prev.filter((item) => item.id !== order.id),
+      );
+      setOrders((prev) =>
         prev.map((item) =>
           item.id === order.id
-            ? { ...item, status: 'Курьер назначен', eta: result.eta || item.eta }
+            ? { ...item, status: nextStatus, eta: result.eta || item.eta }
             : item,
         ),
       );
@@ -851,6 +962,56 @@ export default function App() {
     } finally {
       setCourierLoading(false);
     }
+  };
+
+  const handleCourierStatusChange = async (order, nextStatus) => {
+    setCourierLoading(true);
+    setCourierError('');
+
+    try {
+      const courierId = await resolveCourierId();
+      const response = await fetch(`/api/v1/orders/${order.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courier_id: courierId,
+          status: nextStatus,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      const nextStatusLabel = formatOrderStatus(result.status || nextStatus);
+      setOrders((prev) =>
+        prev.map((item) =>
+          item.id === order.id
+            ? { ...item, status: nextStatusLabel }
+            : item,
+        ),
+      );
+      setCourierOrders((prev) =>
+        prev.map((item) =>
+          item.id === order.id
+            ? { ...item, status: nextStatusLabel }
+            : item,
+        ),
+      );
+      setCourierActiveOrderId(order.id);
+      setBanner(`Статус заказа ${order.id}: ${nextStatusLabel}.`);
+    } catch (_error) {
+      setCourierError('Не удалось изменить статус заказа.');
+    } finally {
+      setCourierLoading(false);
+    }
+  };
+
+  const refreshClientOrders = async () => {
+    await syncOrdersFromBackend();
+    setBanner('Статусы обновлены из сервера.');
   };
 
   const handleLogout = () => {
@@ -901,6 +1062,61 @@ export default function App() {
 
           <div className={mapExpanded ? 'layout-grid map-expanded' : 'layout-grid'}>
             <section className="orders-panel card-shell">
+              <div className="section-heading">
+                <div>
+                  <p className="brand-eyebrow">Мои заказы</p>
+                  <h2>Взятые в работу</h2>
+                </div>
+                <span className="panel-pill">{courierMyOrders.length}</span>
+              </div>
+
+              {courierMyOrders.length === 0 && !courierLoading && <p className="panel-caption">Пока нет принятых заказов.</p>}
+
+              {courierMyOrders.length > 0 && (
+                <ul className="orders-list compact courier-orders-block">
+                  {courierMyOrders.map((order) => {
+                    const isSelected = order.id === courierActiveOrderId;
+                    const nextAction = getCourierNextAction(order.status);
+
+                    return (
+                      <li key={`my-${order.id}`}>
+                        <div className={isSelected ? 'market-order selected' : 'market-order'}>
+                          <button
+                            type="button"
+                            className={isSelected ? 'order-item compact-item active' : 'order-item compact-item'}
+                            onClick={() => setCourierActiveOrderId(order.id)}
+                          >
+                            <div>
+                              <strong>{order.id}</strong>
+                              <p>{order.from}</p>
+                              <p>{order.to}</p>
+                            </div>
+                            <div className="order-aside">
+                              <span>{formatOrderStatus(order.status)}</span>
+                              <small>{order.eta || '—'}</small>
+                            </div>
+                          </button>
+                          {nextAction ? (
+                            <button
+                              type="button"
+                              className="submit-btn ghost market-accept-btn"
+                              disabled={courierLoading}
+                              onClick={() => handleCourierStatusChange(order, nextAction.status)}
+                            >
+                              {nextAction.label}
+                            </button>
+                          ) : (
+                            <div className="order-finished-pill">Заказ завершён</div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              <div className="panel-divider" />
+
               <div className="section-heading">
                 <div>
                   <p className="brand-eyebrow">Свободные заказы</p>
@@ -1001,6 +1217,9 @@ export default function App() {
                 </p>
                 <p>
                   <strong>Заказ:</strong> {activeOrder?.id || '—'}
+                </p>
+                <p>
+                  <strong>Статус:</strong> {formatOrderStatus(activeOrder?.status)}
                 </p>
                 <p>
                   <strong>Откуда:</strong> {activeOrder?.from || '—'}
@@ -1317,32 +1536,6 @@ export default function App() {
     }
   };
 
-  const simulateStep = () => {
-    if (!activeOrder) {
-      return;
-    }
-
-    const currentIndex = STATUS_FLOW.indexOf(activeOrder.status);
-    if (currentIndex >= STATUS_FLOW.length - 1) {
-      setBanner(`Заказ ${activeOrder.id} уже завершен.`);
-      return;
-    }
-
-    const nextStatus = STATUS_FLOW[currentIndex + 1];
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === activeOrder.id
-          ? {
-              ...order,
-              status: nextStatus,
-              eta: nextStatus === 'Доставлен' ? '0 мин' : order.eta,
-            }
-          : order,
-      ),
-    );
-    setBanner(`Статус заказа ${activeOrder.id}: ${nextStatus}.`);
-  };
-
   if (currentView === 'register') {
     return (
       <main className="page auth-page">
@@ -1489,8 +1682,8 @@ export default function App() {
                   <span>Всего заказов</span>
                 </div>
                 <div className="stat-card">
-                  <strong>{isCourier ? courierOrders.length : activeOrder ? 1 : 0}</strong>
-                  <span>{isCourier ? 'Заказов на бирже' : 'Активный заказ'}</span>
+                  <strong>{isCourier ? courierMyOrders.length : activeOrder ? 1 : 0}</strong>
+                  <span>{isCourier ? 'Моих заказов' : 'Активный заказ'}</span>
                 </div>
                 <div className="stat-card">
                   <strong>{isCourier ? acceptedCourierOrderIds.length : completedOrders}</strong>
@@ -1560,7 +1753,7 @@ export default function App() {
                         <p>{order.to}</p>
                       </div>
                       <div className="order-aside">
-                        <span>{order.status}</span>
+                        <span>{formatOrderStatus(order.status)}</span>
                         <small>{order.eta}</small>
                       </div>
                     </button>
@@ -1819,6 +2012,9 @@ export default function App() {
             <div className="map-meta">
               <p>Клик по карте ставит {mapEditTarget === 'from' ? 'точку A' : 'точку B'}.</p>
               <p>
+                <strong>Статус:</strong> {formatOrderStatus(activeOrder?.status)}
+              </p>
+              <p>
                 <strong>Откуда:</strong> {activeOrder?.from || '—'}
               </p>
               <p>
@@ -1875,7 +2071,7 @@ export default function App() {
                       <p>{order.to}</p>
                     </div>
                     <div className="order-aside">
-                      <span>{order.status}</span>
+                      <span>{formatOrderStatus(order.status)}</span>
                       <small>{order.eta}</small>
                     </div>
                   </button>
@@ -1893,7 +2089,10 @@ export default function App() {
                 </li>
               ))}
             </ol>
-            <p className="panel-caption">Статус обновляется через курьерский экран после принятия заказа.</p>
+            <p className="panel-caption">Текущий статус: {formatOrderStatus(activeOrder?.status)}.</p>
+            <button type="button" className="submit-btn ghost" onClick={refreshClientOrders}>
+              Обновить статусы
+            </button>
           </article>
         </section>
       </section>

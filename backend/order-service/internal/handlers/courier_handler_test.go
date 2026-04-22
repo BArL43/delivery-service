@@ -64,6 +64,7 @@ type mockAssignmentRepo struct {
 	createErr error
 	byOrder   *models.Assignment
 	byCourier *models.Assignment
+	updateErr error
 }
 
 func (m *mockAssignmentRepo) Create(ctx context.Context, a models.Assignment) error {
@@ -83,6 +84,9 @@ func (m *mockAssignmentRepo) GetActiveByCourierID(ctx context.Context, courierID
 	c := *m.byCourier
 	return &c, nil
 }
+func (m *mockAssignmentRepo) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
+	return m.updateErr
+}
 
 // --- Tests ---
 
@@ -91,7 +95,7 @@ func TestToggleAvailability(t *testing.T) {
 		ID:            "test-id",
 		TransportType: "bicycle",
 	}
-	h := NewCourierHandler(&mockCourierRepo{courier: courier}, nil)
+	h := NewCourierHandler(&mockCourierRepo{courier: courier}, nil, nil)
 
 	body := `{"courier_id":"test-id","is_online":true,"transport_type":"car"}`
 	req := httptest.NewRequest("POST", "/api/v1/couriers/availability", strings.NewReader(body))
@@ -111,7 +115,7 @@ func TestToggleAvailability(t *testing.T) {
 }
 
 func TestToggleAvailability_MissingCourierID(t *testing.T) {
-	h := NewCourierHandler(&mockCourierRepo{}, nil)
+	h := NewCourierHandler(&mockCourierRepo{}, nil, nil)
 	body := `{"is_online":true}`
 	req := httptest.NewRequest("POST", "/api/v1/couriers/availability", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -124,7 +128,7 @@ func TestToggleAvailability_MissingCourierID(t *testing.T) {
 }
 
 func TestUpdateLocation(t *testing.T) {
-	h := NewCourierHandler(&mockCourierRepo{}, nil)
+	h := NewCourierHandler(&mockCourierRepo{}, nil, nil)
 	body := `{"courier_id":"test-id","lat":55.7,"lon":37.6}`
 	req := httptest.NewRequest("POST", "/api/v1/couriers/location", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -143,7 +147,7 @@ func TestUpdateLocation(t *testing.T) {
 }
 
 func TestUpdateLocation_MissingCourierID(t *testing.T) {
-	h := NewCourierHandler(&mockCourierRepo{}, nil)
+	h := NewCourierHandler(&mockCourierRepo{}, nil, nil)
 	body := `{"lat":55.7,"lon":37.6}`
 	req := httptest.NewRequest("POST", "/api/v1/couriers/location", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -163,6 +167,7 @@ func TestAssignOrder_ManualMode(t *testing.T) {
 	h := NewCourierHandler(
 		&mockCourierRepo{courier: courier},
 		&mockAssignmentRepo{},
+		nil,
 	)
 	body := `{"courier_id":"courier-1","mode":"manual"}`
 	req := httptest.NewRequest("POST", "/orders/order-1/assign", strings.NewReader(body))
@@ -185,6 +190,7 @@ func TestAssignOrder_AutoMode_NoAvailable(t *testing.T) {
 	h := NewCourierHandler(
 		&mockCourierRepo{available: []models.Courier{}},
 		&mockAssignmentRepo{},
+		nil,
 	)
 	body := `{"mode":"auto"}`
 	req := httptest.NewRequest("POST", "/orders/order-1/assign", strings.NewReader(body))
@@ -198,7 +204,7 @@ func TestAssignOrder_AutoMode_NoAvailable(t *testing.T) {
 }
 
 func TestAssignOrder_ManualMode_MissingCourierID(t *testing.T) {
-	h := NewCourierHandler(&mockCourierRepo{}, nil)
+	h := NewCourierHandler(&mockCourierRepo{}, nil, nil)
 	body := `{"mode":"manual"}`
 	req := httptest.NewRequest("POST", "/orders/order-1/assign", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -218,6 +224,7 @@ func TestGetActiveOrder(t *testing.T) {
 	}
 	h := NewCourierHandler(
 		&mockCourierRepo{orders: map[string]*models.Order{"courier-1": order}},
+		nil,
 		nil,
 	)
 	req := httptest.NewRequest("GET", "/couriers/courier-1/active-order", nil)

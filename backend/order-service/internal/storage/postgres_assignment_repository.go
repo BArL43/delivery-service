@@ -121,3 +121,20 @@ func (r *PostgresAssignmentRepository) GetActiveByCourierID(ctx context.Context,
 
 	return &a, nil
 }
+
+func (r *PostgresAssignmentRepository) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
+	query := `
+		UPDATE assignments
+		SET status = $1, updated_at = NOW()
+		WHERE order_id = $2
+	`
+	result, err := r.pool.Exec(ctx, query, newStatus, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to update assignment status: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("assignment not found")
+	}
+
+	return nil
+}

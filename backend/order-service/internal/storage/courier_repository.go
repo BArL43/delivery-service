@@ -21,6 +21,7 @@ type AssignmentRepository interface {
 	Create(ctx context.Context, a models.Assignment) error
 	GetByOrderID(ctx context.Context, orderID string) (*models.Assignment, error)
 	GetActiveByCourierID(ctx context.Context, courierID string) (*models.Assignment, error)
+	UpdateStatus(ctx context.Context, orderID string, newStatus string) error
 }
 
 type CourierLocationRepository interface {

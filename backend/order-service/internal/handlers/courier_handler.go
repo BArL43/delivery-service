@@ -20,15 +20,18 @@ import (
 type CourierHandler struct {
 	courierRepo    storage.CourierRepository
 	assignmentRepo storage.AssignmentRepository
+	orderRepo      storage.OrderRepository
 }
 
 func NewCourierHandler(
 	courierRepo storage.CourierRepository,
 	assignmentRepo storage.AssignmentRepository,
+	orderRepo storage.OrderRepository,
 ) *CourierHandler {
 	return &CourierHandler{
 		courierRepo:    courierRepo,
 		assignmentRepo: assignmentRepo,
+		orderRepo:      orderRepo,
 	}
 }
 
@@ -332,6 +335,100 @@ func (h *CourierHandler) GetActiveOrder(w http.ResponseWriter, r *http.Request) 
 		"order_id":     order.ID,
 		"from_address": order.FromAddress,
 		"to_address":   order.ToAddress,
+	})
+}
+
+// UpdateOrderStatus handles PATCH /api/v1/orders/{orderId}/status
+func (h *CourierHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	orderId := strings.TrimSpace(r.PathValue("orderId"))
+	if orderId == "" {
+		path := strings.TrimPrefix(r.URL.Path, "/orders/")
+		path = strings.TrimPrefix(path, "/api/v1/orders/")
+		path = strings.TrimSuffix(path, "/")
+		orderId = strings.TrimSuffix(path, "/status")
+		orderId = strings.TrimSuffix(orderId, "/")
+	}
+
+	if orderId == "" {
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusBadRequest, "order_id is required")
+		return
+	}
+
+	var req struct {
+		CourierID string `json:"courier_id"`
+		Status    string `json:"status"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		observability.Logger().Warn("courier_order_status_decode_error", "error", err)
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.CourierID = strings.TrimSpace(req.CourierID)
+	req.Status = strings.TrimSpace(req.Status)
+	if req.CourierID == "" || req.Status == "" {
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusBadRequest, "courier_id and status are required")
+		return
+	}
+
+	allowedStatuses := map[string]bool{
+		"assigned":    true,
+		"at_pickup":   true,
+		"in_progress": true,
+		"delivered":   true,
+		"cancelled":   true,
+	}
+	if !allowedStatuses[req.Status] {
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusBadRequest, "unsupported status")
+		return
+	}
+
+	assignment, err := h.assignmentRepo.GetByOrderID(r.Context(), orderId)
+	if err != nil {
+		observability.Logger().Warn("courier_order_status_assignment_missing", "error", err, "order_id", orderId)
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusNotFound, "assignment not found")
+		return
+	}
+	if assignment.CourierID != req.CourierID {
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusForbidden, "order is assigned to another courier")
+		return
+	}
+
+	if err := h.orderRepo.UpdateStatus(r.Context(), orderId, req.Status); err != nil {
+		observability.Logger().Error("courier_order_status_order_update_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to update order status")
+		return
+	}
+
+	if err := h.assignmentRepo.UpdateStatus(r.Context(), orderId, req.Status); err != nil {
+		observability.Logger().Error("courier_order_status_assignment_update_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
+		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to update assignment status")
+		return
+	}
+
+	if req.Status == "delivered" {
+		if err := h.courierRepo.UnassignActiveOrder(r.Context(), req.CourierID); err != nil {
+			observability.Logger().Warn("courier_order_status_unassign_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID)
+		}
+	}
+
+	observability.Logger().Info("courier_order_status_updated", "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
+	observability.Stats().ObserveBusiness("courier_order_status_update", "success")
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"order_id":   orderId,
+		"courier_id":  req.CourierID,
+		"status":      req.Status,
+		"reason":      req.Reason,
 	})
 }
 

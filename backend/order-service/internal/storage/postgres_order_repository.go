@@ -134,3 +134,20 @@ func (r *PostgresOrderRepository) List(ctx context.Context) ([]models.Order, err
 
 	return orders, nil
 }
+
+func (r *PostgresOrderRepository) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
+	query := `
+		UPDATE orders
+		SET status = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	result, err := r.pool.Exec(ctx, query, newStatus, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to update order status: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("order not found")
+	}
+
+	return nil
+}
