@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"order-service/internal/models"
 	"context"
+	"order-service/internal/models"
 )
 
 type OrderRepository interface {

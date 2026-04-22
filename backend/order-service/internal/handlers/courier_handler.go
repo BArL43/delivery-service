@@ -426,9 +426,9 @@ func (h *CourierHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Reques
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"order_id":   orderId,
-		"courier_id":  req.CourierID,
-		"status":      req.Status,
-		"reason":      req.Reason,
+		"courier_id": req.CourierID,
+		"status":     req.Status,
+		"reason":     req.Reason,
 	})
 }
 
