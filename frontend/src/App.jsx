@@ -1080,9 +1080,11 @@ export default function App() {
         ),
       );
       setCourierActiveOrderId(order.id);
+      await syncOrdersFromBackend();
       setBanner(`Статус заказа ${order.id}: ${nextStatusLabel}.`);
-    } catch (_error) {
-      setCourierError('Не удалось изменить статус заказа.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось изменить статус заказа.';
+      setCourierError(message || 'Не удалось изменить статус заказа.');
     } finally {
       setCourierLoading(false);
     }
@@ -1192,6 +1194,45 @@ export default function App() {
                     );
                   })}
                 </ul>
+              )}
+
+              {courierActiveOrder && (
+                <div className="profile-spotlight courier-order-details">
+                  <p className="brand-eyebrow">Информация о заказе</p>
+                  <strong>{courierActiveOrder.id}</strong>
+                  <span>
+                    {formatOrderStatus(courierActiveOrder.status)} · {courierActiveOrder.eta || 'ETA нет'}
+                  </span>
+                  <span>
+                    {courierActiveOrder.from || '—'} → {courierActiveOrder.to || '—'}
+                  </span>
+                  {courierActiveOrder.price !== undefined && (
+                    <span>Стоимость: {courierActiveOrder.price}₽</span>
+                  )}
+                  {courierActiveOrder.weight !== undefined && (
+                    <span>Вес: {courierActiveOrder.weight} кг</span>
+                  )}
+                  {courierActiveOrder.fromAddress?.comment && (
+                    <span>Комментарий A: {courierActiveOrder.fromAddress.comment}</span>
+                  )}
+                  {courierActiveOrder.toAddress?.comment && (
+                    <span>Комментарий B: {courierActiveOrder.toAddress.comment}</span>
+                  )}
+                  <div className="courier-order-actions">
+                    {getCourierNextAction(courierActiveOrder.status) ? (
+                      <button
+                        type="button"
+                        className="submit-btn ghost market-accept-btn"
+                        disabled={courierLoading}
+                        onClick={() => handleCourierStatusChange(courierActiveOrder, getCourierNextAction(courierActiveOrder.status).status)}
+                      >
+                        {getCourierNextAction(courierActiveOrder.status).label}
+                      </button>
+                    ) : (
+                      <div className="order-finished-pill">Заказ завершён</div>
+                    )}
+                  </div>
+                </div>
               )}
 
               <div className="panel-divider" />

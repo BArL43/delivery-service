@@ -384,6 +384,16 @@ body {
   margin-bottom: 4px;
 }
 
+.courier-order-details {
+  margin-top: 14px;
+}
+
+.courier-order-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .panel-divider {
   border: 0;
   height: 1px;
