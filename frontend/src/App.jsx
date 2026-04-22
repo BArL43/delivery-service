@@ -315,6 +315,34 @@ export default function App() {
     setProfileForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const resolveCourierId = async () => {
+    if (session.profile.courierId) {
+      return session.profile.courierId;
+    }
+
+    const email = session.profile.email?.trim();
+    if (!email) {
+      throw new Error('Нет courier_id и email для его восстановления.');
+    }
+
+    const params = new URLSearchParams({ email });
+    const response = await fetch(`/api/v1/couriers/by-email?${params.toString()}`);
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(body || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const courierId = data.courier_id || '';
+    if (!courierId) {
+      throw new Error('order-service не вернул courier_id.');
+    }
+
+    const nextProfile = { ...session.profile, courierId };
+    updateSession({ ...session, profile: nextProfile });
+    return courierId;
+  };
+
   const readResponseError = async (response) => {
     const body = await response.text();
 
@@ -660,6 +688,38 @@ export default function App() {
   }, [currentView, acceptedCourierOrderIds, courierRefreshTick, session.profile.role]);
 
   useEffect(() => {
+    if (currentView !== 'courier' || session.profile.role !== 'courier') {
+      return;
+    }
+
+    if (session.profile.courierId || !session.profile.email) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const hydrateCourierId = async () => {
+      try {
+        await resolveCourierId();
+        if (!cancelled) {
+          setCourierError('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : 'Не удалось восстановить courier_id.';
+          setCourierError(message);
+        }
+      }
+    };
+
+    hydrateCourierId();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView, session.profile.role, session.profile.email, session.profile.courierId]);
+
+  useEffect(() => {
     if (currentView !== 'courier' || !courierActiveOrder) {
       return;
     }
@@ -703,7 +763,17 @@ export default function App() {
         );
       } catch (_error) {
         if (!cancelled) {
-          setCourierError('Не удалось определить координаты заказа.');
+          setCourierOrders((prev) =>
+            prev.map((order) =>
+              order.id === courierActiveOrder.id && (!order.fromCoords || !order.toCoords)
+                ? {
+                    ...order,
+                    fromCoords: order.fromCoords || DEFAULT_FROM_COORDS,
+                    toCoords: order.toCoords || DEFAULT_TO_COORDS,
+                  }
+                : order,
+            ),
+          );
         }
       }
     };
@@ -716,20 +786,16 @@ export default function App() {
   }, [currentView, courierActiveOrderId, courierActiveOrder, courierOrders.length]);
 
   const handleCourierToggleOnline = async () => {
-    if (!session.profile.courierId) {
-      setCourierError('Нет courier_id. Перерегистрируйся как курьер.');
-      return;
-    }
-
     setCourierLoading(true);
     setCourierError('');
 
     try {
+      const courierId = await resolveCourierId();
       const response = await fetch('/api/v1/couriers/availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          courier_id: session.profile.courierId,
+          courier_id: courierId,
           is_online: !courierOnline,
           transport_type: session.profile.transportType || 'bicycle',
         }),
@@ -750,20 +816,16 @@ export default function App() {
   };
 
   const handleCourierTakeOrder = async (order) => {
-    if (!session.profile.courierId) {
-      setCourierError('Нет courier_id.');
-      return;
-    }
-
     setCourierLoading(true);
     setCourierError('');
 
     try {
+      const courierId = await resolveCourierId();
       const response = await fetch(`/api/v1/orders/${order.id}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          courier_id: session.profile.courierId,
+          courier_id: courierId,
           mode: 'manual',
         }),
       });
