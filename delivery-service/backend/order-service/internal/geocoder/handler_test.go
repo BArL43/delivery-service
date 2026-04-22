@@ -21,7 +21,7 @@ func TestGeocodeHandler_Validation(t *testing.T) {
 		{
 			name:           "Geocode: Пустой адрес",
 			method:         http.MethodGet,
-			url:            "/geocode?address=   ",
+			url:            "/geocode?address=%20%20%20",
 			handlerFunc:    handler.GeocodeAddress,
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   `{"error": "address query parameter is required"}`,
