@@ -2,6 +2,8 @@
 
 Проект приведен к явному разделению на фронтенд и бэкенд.
 
+Домен сервиса: **nezy.online**
+
 ## Структура
 
 ```text
@@ -152,18 +154,46 @@ docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps
 - билдит и пушит Docker-образы в Docker Hub;
 - подключается по SSH к серверу и обновляет compose-стек.
 
-<<<<<<< HEAD
-=======
 ## Observability
 
-В проект добавлен стек для локального мониторинга и логирования:
+В проект включён стек мониторинга и логирования: **Prometheus + Loki + Grafana** (PLG).
+
+Grafana доступна по адресу: **nezy.online/grafana**.
 
 - Prometheus собирает метрики из `auth-service` и `order-service`.
 - Loki хранит JSON-логи приложений.
 - Promtail читает Docker logs и отправляет их в Loki.
 - Grafana автоматически подхватывает datasources и дашборды.
 
-### Что нужно сделать
+
+### Два типа логирования
+
+#### Инфраструктурное логирование
+
+Отражает состояние самой платформы — HTTP-запросы, задержки, ошибки, активность.
+
+- **Метрики (Prometheus)**:
+  - `delivery_http_requests_total` — общее число HTTP-запросов
+  - `delivery_http_request_duration_seconds` — задержки обработки
+  - `delivery_http_inflight_requests` — активные запросы в данный момент
+
+- **Логи (Loki)**: каждый HTTP-запрос логируется мидлварью как JSON-событие с полями:
+  `service`, `method`, `route`, `status`, `duration_ms`, `remote_ip`, `user_agent`
+
+- **Дашборд**: `Delivery Infra` — health платформы, load, error rate.
+
+#### Бизнес-логирование
+
+Отражает события предметной области — регистрация, логин, создание заказов, назначение курьеров.
+
+- **Метрики (Prometheus)**:
+  - `delivery_business_events_total` — счётчик бизнес-событий (label `event` + `result`)
+
+- **Логи (Loki)**: бизнес-события логируются через `observability.Collector.ObserveBusiness()` и `slog` с полями `service`, `event`, `result`, `user_id`, `order_id`.
+
+- **Дашборд**: `Delivery Business` — регистрация, логин, создание заказов, назначение курьеров.
+
+### Запуск
 
 1. Сначала задеплой приложение через CI/CD или вручную обычным compose.
 2. Убедись, что приложение и observability-стек находятся в одной Docker network. По умолчанию это `delivery-service_default`.
@@ -176,24 +206,12 @@ docker compose -f docker-compose.observability.yml up -d
 4. Открой Grafana на `http://<server>:3000`.
 5. Логин по умолчанию: `admin / admin`.
 
-### Доступные дашборды
-
-- `Delivery Infra` - метрики HTTP, задержки, ошибки и активные запросы.
-- `Delivery Business` - регистрация, логин, создание заказов и назначение курьеров.
-
-### Основные метрики
-
-- `delivery_http_requests_total`
-- `delivery_http_request_duration_seconds`
-- `delivery_http_inflight_requests`
-- `delivery_business_events_total`
-
 ### Основные запросы Loki
 
 - Все ошибки сервисов: `{service=~"auth-service|order-service"} |= "error"`
 - Бизнес-события: `{service=~"auth-service|order-service"} | json | event != ""`
+- Запросы по конкретному маршруту: `{service="order-service"} | json | route="POST /orders"`
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 ### Настройка в GitLab
 
 В Settings → CI/CD → Variables добавить:
