@@ -2,61 +2,20 @@ package main
 
 import (
 	"context"
-<<<<<<< HEAD
-	"log"
-=======
 	"log/slog"
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-<<<<<<< HEAD
-	"order-service/internal/geocoder"
-	"order-service/internal/handlers"
-=======
 	"order-service/internal/handlers"
 	"order-service/internal/models"
 	"order-service/internal/observability"
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 	"order-service/internal/pricing"
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-<<<<<<< HEAD
-	"github.com/redis/go-redis/v9"
-)
-
-func main() {
-	ctx := context.Background()
-
-	// 1. Database Connection (Postgres)
-	connStr := "postgres://postgres:postgres@localhost:45432/postgres?sslmode=disable"
-	pool, err := pgxpool.New(ctx, connStr)
-	if err != nil {
-		log.Fatalf("Unable to connect to database: %v\n", err)
-	}
-	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("Could not ping database: %v\n", err)
-	}
-	log.Println("Successfully connected to PostgreSQL")
-
-	// 1.5. Database Connection (Redis)
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       0,
-	})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Could not ping Redis: %v\n", err)
-	}
-	defer rdb.Close()
-	log.Println("Successfully connected to Redis")
-=======
 )
 
 func getEnv(key, fallback string) string {
@@ -73,7 +32,7 @@ func main() {
 	metrics := observability.NewCollector()
 	observability.SetLogger(logger)
 	observability.SetCollector(metrics)
-	// 1. Database Connection
+
 	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
@@ -82,7 +41,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Verify connection
 	if err := pool.Ping(ctx); err != nil {
 		logger.Error("database_ping_failed", "service", "order-service", "error", err)
 		os.Exit(1)
@@ -94,46 +52,9 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("courier_schema_ready", "service", "order-service")
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
-	// 2. Pricing Calculator (from env vars)
 	pricingCfg := pricing.LoadConfig()
 	priceCalc := pricing.NewCalculator(pricingCfg)
-<<<<<<< HEAD
-	log.Printf("Pricing config: base=%.0f, per_km=%.0f, per_kg=%.0f",
-		pricingCfg.BaseRate, pricingCfg.PerKmRate, pricingCfg.PerKgRate)
-
-	// 3. Dependency Injection (Orders)
-	orderRepo := storage.NewPostgresOrderRepository(pool)
-	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
-
-	// 3.5. Dependency Injection (Geocoder)
-	geoCache := geocoder.NewRedisGeocodeCache(rdb)
-	osmProvider := geocoder.NewOSMProvider()
-	geoService := geocoder.NewService(geoCache, osmProvider, osmProvider)
-	geoHandler := geocoder.NewGeocodeHandler(geoService)
-
-	// 4. Routing (using Go 1.22+ enhanced mux)
-	mux := http.NewServeMux()
-
-	// Mapping handlers to endpoints (Orders)
-	// Я добавил префикс /api/v1/ как было в твоем изначальном ТЗ,
-	// если хочешь оставить просто /orders — смело стирай /api/v1
-	mux.HandleFunc("POST /api/v1/orders", ordersHandler.CreateOrder)
-	mux.HandleFunc("GET /api/v1/orders", ordersHandler.ListOrders)
-	mux.HandleFunc("GET /api/v1/orders/{id}", ordersHandler.GetOrder)
-	mux.HandleFunc("PATCH /api/v1/orders/{orderId}/status", ordersHandler.UpdateOrderStatus) // ---> НОВОЕ: Смена статуса
-
-	// Mapping handlers to endpoints (Geocoder)
-	mux.HandleFunc("GET /api/v1/geocode", geoHandler.GeocodeAddress)
-	mux.HandleFunc("GET /api/v1/geocode/suggest", geoHandler.Suggest)
-	mux.HandleFunc("POST /api/v1/geocode/reverse", geoHandler.ReverseGeocode)
-
-	// 5. Server Setup with Graceful Shutdown
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-=======
 	logger.Info("pricing_config_loaded",
 		"service", "order-service",
 		"base_rate", pricingCfg.BaseRate,
@@ -141,30 +62,25 @@ func main() {
 		"per_kg_rate", pricingCfg.PerKgRate,
 	)
 
-	// 3. Dependency Injection
 	orderRepo := storage.NewPostgresOrderRepository(pool)
 	if err := seedDemoOrders(ctx, orderRepo, priceCalc); err != nil {
 		logger.Error("demo_orders_seed_failed", "service", "order-service", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("demo_orders_ready", "service", "order-service")
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
 
-	// 4. Courier dependencies
 	courierRepo := storage.NewPostgresCourierRepository(pool)
 	assignmentRepo := storage.NewPostgresAssignmentRepository(pool)
 	courierHandler := handlers.NewCourierHandler(courierRepo, assignmentRepo, orderRepo)
 
-	// 5. Routing (using Go 1.22+ enhanced mux)
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", observability.Handler())
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Mapping handlers to endpoints
 	mux.HandleFunc("POST /orders", ordersHandler.CreateOrder)
 	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
 	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
@@ -172,7 +88,6 @@ func main() {
 	mux.HandleFunc("GET /api/v1/orders", ordersHandler.ListOrders)
 	mux.HandleFunc("GET /api/v1/orders/{id}", ordersHandler.GetOrder)
 
-	// Courier routes
 	mux.HandleFunc("POST /api/v1/couriers/register", courierHandler.RegisterCourier)
 	mux.HandleFunc("GET /api/v1/couriers/by-email", courierHandler.GetCourierByEmail)
 	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
@@ -181,53 +96,43 @@ func main() {
 	mux.HandleFunc("PATCH /api/v1/orders/{orderId}/status", courierHandler.UpdateOrderStatus)
 	mux.HandleFunc("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
 
-	// 6. Server Setup with Graceful Shutdown
+	addr := getEnv("ORDER_HTTP_ADDR", ":8080")
 	server := &http.Server{
-		Addr:    ":8080",
-		Handler: observability.Middleware(mux),
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+		Addr:              addr,
+		Handler:           observability.Middleware(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
-	// Create a channel to listen for interrupt signals
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
-	// Start the server in a goroutine
+	serverErr := make(chan error, 1)
 	go func() {
-<<<<<<< HEAD
-		log.Printf("Starting API Gateway server on :8080\n")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v\n", err)
-=======
-		logger.Info("server_starting", "service", "order-service", "addr", ":8080")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server_failed", "service", "order-service", "error", err)
-			os.Exit(1)
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
-		}
+		logger.Info("server_starting", "service", "order-service", "addr", addr)
+		serverErr <- server.ListenAndServe()
 	}()
 
-	// Wait for interrupt signal
-	<-stop
-<<<<<<< HEAD
-	log.Println("Shutting down server...")
-=======
-	logger.Info("server_shutdown_start", "service", "order-service")
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+	select {
+	case sig := <-stop:
+		logger.Info("server_shutdown_start", "service", "order-service", "signal", sig.String())
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server_failed", "service", "order-service", "error", err)
+			return
+		}
+		return
+	}
 
-	// Create a context with timeout for shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-<<<<<<< HEAD
-		log.Fatalf("Server forced to shutdown: %v", err)
-	}
-
-	log.Println("Server exiting")
-=======
 		logger.Error("server_shutdown_failed", "service", "order-service", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	logger.Info("server_exited", "service", "order-service")
@@ -356,5 +261,4 @@ func seedDemoOrders(ctx context.Context, orderRepo storage.OrderRepository, pric
 	}
 
 	return nil
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }
