@@ -16,4 +16,5 @@ type OrderRepository interface {
 type UserOrderRepository interface {
 	OrderRepository
 	ListByUser(ctx context.Context, userID, status string, page, limit int, sort string) ([]models.Order, int, error)
+	ListForCourier(ctx context.Context, userID, status string, page, limit int, sort string) ([]models.Order, int, error)
 }

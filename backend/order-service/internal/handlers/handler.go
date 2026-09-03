@@ -45,6 +45,11 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	role, _ := middleware.Role(r.Context())
+	if role != "client" {
+		jsonError(w, http.StatusForbidden, "only clients can create orders")
+		return
+	}
 	var req CreateOrderRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		observability.Stats().ObserveBusiness("order_create", "failure")
@@ -108,6 +113,12 @@ func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	role, ok := middleware.Role(r.Context())
+	if !ok {
+		jsonError(w, http.StatusForbidden, "role is required")
+		return
+	}
+
 	page := parseBoundedInt(r.URL.Query().Get("page"), 1, 1, 1_000_000)
 	limit := parseBoundedInt(r.URL.Query().Get("limit"), 20, 1, 100)
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
@@ -120,7 +131,21 @@ func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid sort")
 		return
 	}
-	orders, total, err := h.repo.ListByUser(r.Context(), userID, status, page, limit, sort)
+
+	var (
+		orders []models.Order
+		total  int
+		err    error
+	)
+	switch role {
+	case "client":
+		orders, total, err = h.repo.ListByUser(r.Context(), userID, status, page, limit, sort)
+	case "courier":
+		orders, total, err = h.repo.ListForCourier(r.Context(), userID, status, page, limit, sort)
+	default:
+		jsonError(w, http.StatusForbidden, "unsupported role")
+		return
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to list orders")
 		return

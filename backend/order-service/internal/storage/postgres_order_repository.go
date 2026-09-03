@@ -121,6 +121,57 @@ func (r *PostgresOrderRepository) ListByUser(ctx context.Context, userID, status
 	return orders, total, nil
 }
 
+func (r *PostgresOrderRepository) ListForCourier(ctx context.Context, userID, status string, page, limit int, sort string) ([]models.Order, int, error) {
+	accessClause := `(
+		o.status = 'created'
+		OR EXISTS (
+			SELECT 1
+			FROM assignments a
+			JOIN couriers c ON c.id = a.courier_id
+			WHERE a.order_id = o.id AND c.user_id = $1
+		)
+	)`
+
+	countQuery := `SELECT COUNT(*) FROM orders o WHERE ` + accessClause
+	countArgs := []any{userID}
+	if status != "" {
+		countQuery += ` AND o.status = $2`
+		countArgs = append(countArgs, status)
+	}
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count courier orders: %w", err)
+	}
+
+	orderBy := "o.created_at DESC"
+	switch sort {
+	case "price_asc":
+		orderBy = "o.price ASC, o.created_at DESC"
+	case "price_desc":
+		orderBy = "o.price DESC, o.created_at DESC"
+	}
+
+	args := []any{userID}
+	query := `
+		SELECT o.id, o.user_id, o.from_address, o.to_address, o.from_coords, o.to_coords,
+		       o.weight, o.distance_km, o.price, o.status, o.created_at, o.updated_at
+		FROM orders o
+		WHERE ` + accessClause
+	if status != "" {
+		query += ` AND o.status = $2`
+		args = append(args, status)
+	}
+	query += " ORDER BY " + orderBy
+	args = append(args, limit, (page-1)*limit)
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+
+	orders, err := r.queryOrders(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
 func (r *PostgresOrderRepository) UpdateStatus(ctx context.Context, orderID string, newStatus string) error {
 	result, err := r.pool.Exec(ctx, `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2`, newStatus, orderID)
 	if err != nil {

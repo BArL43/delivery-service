@@ -38,6 +38,11 @@ func (h *CourierHandler) RegisterCourier(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	role, _ := middleware.Role(r.Context())
+	if role != "courier" {
+		jsonError(w, http.StatusForbidden, "courier role is required")
+		return
+	}
 
 	var req struct {
 		Email         string `json:"email"`
@@ -107,6 +112,11 @@ func (h *CourierHandler) GetCourierByEmail(w http.ResponseWriter, r *http.Reques
 	userID, ok := middleware.UserID(r.Context())
 	if !ok {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	role, _ := middleware.Role(r.Context())
+	if role != "courier" {
+		jsonError(w, http.StatusForbidden, "courier role is required")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("email")))
@@ -202,13 +212,19 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	role, ok := middleware.Role(r.Context())
+	if !ok || (role != "client" && role != "courier") {
+		jsonError(w, http.StatusForbidden, "unsupported role")
+		return
+	}
+
 	orderID := strings.TrimSpace(r.PathValue("orderId"))
 	if _, err := uuid.Parse(orderID); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid order_id")
 		return
 	}
 	order, err := h.orderRepo.GetByID(r.Context(), orderID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && order.UserID != userID) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		jsonError(w, http.StatusNotFound, "order not found")
 		return
 	}
@@ -233,6 +249,14 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 	var courierID string
 	switch mode {
 	case "auto":
+		if role != "client" {
+			jsonError(w, http.StatusForbidden, "auto assignment is available to clients only")
+			return
+		}
+		if order.UserID != userID {
+			jsonError(w, http.StatusNotFound, "order not found")
+			return
+		}
 		couriers, err := h.courierRepo.FindAvailable(r.Context())
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to find available couriers")
@@ -244,11 +268,25 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		}
 		courierID = couriers[0].ID
 	case "manual":
-		courierID = strings.TrimSpace(req.CourierID)
-		if courierID == "" {
-			jsonError(w, http.StatusBadRequest, "courier_id is required for manual mode")
+		if role != "courier" {
+			jsonError(w, http.StatusForbidden, "manual assignment is available to couriers only")
 			return
 		}
+		ownedCourier, err := h.courierRepo.GetByUserID(r.Context(), userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "courier profile not found")
+			return
+		}
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to get courier profile")
+			return
+		}
+		requestedID := strings.TrimSpace(req.CourierID)
+		if requestedID != "" && requestedID != ownedCourier.ID {
+			jsonError(w, http.StatusForbidden, "cannot assign an order to another courier")
+			return
+		}
+		courierID = ownedCourier.ID
 	default:
 		jsonError(w, http.StatusBadRequest, "mode must be auto or manual")
 		return
@@ -361,6 +399,11 @@ func (h *CourierHandler) loadOwnedCourier(w http.ResponseWriter, r *http.Request
 	userID, ok := middleware.UserID(r.Context())
 	if !ok {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return nil, false
+	}
+	role, _ := middleware.Role(r.Context())
+	if role != "courier" {
+		jsonError(w, http.StatusForbidden, "courier role is required")
 		return nil, false
 	}
 	courier, err := h.courierRepo.GetByUserID(r.Context(), userID)

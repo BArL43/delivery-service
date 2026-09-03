@@ -90,6 +90,28 @@ const COURIER_STATUS_NEXT_ACTIONS = {
 
 const formatOrderStatus = (status) => ORDER_STATUS_LABELS[status] || status || '—';
 
+const extractOrders = (payload) => {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  return Array.isArray(payload?.orders) ? payload.orders : [];
+};
+
+const normalizeCoords = (value) => {
+  if (Array.isArray(value) && value.length >= 2) {
+    return value;
+  }
+  if (Number.isFinite(value?.latitude) && Number.isFinite(value?.longitude)) {
+    return [value.latitude, value.longitude];
+  }
+  return null;
+};
+
+const authHeaders = (token, json = false) => ({
+  ...(json ? { 'Content-Type': 'application/json' } : {}),
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+});
+
 const parseCoords = (value) => {
   const normalized = value.trim().replace(';', ',');
   const parts = normalized.split(',').map((chunk) => chunk.trim());
@@ -131,8 +153,8 @@ const normalizeBackendOrder = (order) => ({
   to: buildAddressLabel(order.to_address) || order.to || 'Адрес не указан',
   fromAddress: order.from_address || null,
   toAddress: order.to_address || null,
-  fromCoords: order.fromCoords || order.from_coords || null,
-  toCoords: order.toCoords || order.to_coords || null,
+  fromCoords: normalizeCoords(order.fromCoords || order.from_coords),
+  toCoords: normalizeCoords(order.toCoords || order.to_coords),
   eta: order.eta || '—',
 });
 
@@ -269,18 +291,20 @@ export default function App() {
 
     const loadBackendOrders = async () => {
       try {
-        const response = await fetch('/api/v1/orders', { signal: controller.signal });
+        const response = await fetch('/api/v1/orders', { signal: controller.signal, headers: authHeaders(session.token) });
         if (!response.ok) {
           return;
         }
 
         const data = await response.json();
-        if (!Array.isArray(data) || data.length === 0) {
+        const backendOrders = extractOrders(data);
+        if (backendOrders.length === 0) {
+          setOrders([]);
           return;
         }
 
         const previousOrders = new Map(ordersRef.current.map((order) => [order.id, order]));
-        const mappedOrders = data.map((backendOrder) => {
+        const mappedOrders = backendOrders.map((backendOrder) => {
           const order = normalizeBackendOrder(backendOrder);
           const previousOrder = previousOrders.get(order.id);
 
@@ -322,14 +346,18 @@ export default function App() {
       }
     };
 
-    loadBackendOrders();
-    const intervalId = setInterval(loadBackendOrders, 15000);
+    if (session.token) {
+      loadBackendOrders();
+    }
+    const intervalId = session.token ? setInterval(loadBackendOrders, 15000) : null;
 
     return () => {
       controller.abort();
-      clearInterval(intervalId);
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, []);
+  }, [session.token]);
 
   const clientActiveOrder = useMemo(
     () => orders.find((order) => order.id === activeOrderId) ?? orders[0],
@@ -400,7 +428,7 @@ export default function App() {
     }
 
     const params = new URLSearchParams({ email });
-    const response = await fetch(`/api/v1/couriers/by-email?${params.toString()}`);
+    const response = await fetch(`/api/v1/couriers/by-email?${params.toString()}`, { headers: authHeaders(session.token) });
     if (!response.ok) {
       const body = await response.text();
       throw new Error(body || `HTTP ${response.status}`);
@@ -419,18 +447,20 @@ export default function App() {
 
   const syncOrdersFromBackend = async () => {
     try {
-      const response = await fetch('/api/v1/orders');
+      const response = await fetch('/api/v1/orders', { headers: authHeaders(session.token) });
       if (!response.ok) {
         return ordersRef.current;
       }
 
       const data = await response.json();
-      if (!Array.isArray(data) || data.length === 0) {
-        return ordersRef.current;
+      const backendOrders = extractOrders(data);
+      if (backendOrders.length === 0) {
+        setOrders([]);
+        return [];
       }
 
       const previousOrders = new Map(ordersRef.current.map((order) => [order.id, order]));
-      const mappedOrders = data.map((backendOrder) => {
+      const mappedOrders = backendOrders.map((backendOrder) => {
         const order = normalizeBackendOrder(backendOrder);
         const previousOrder = previousOrders.get(order.id);
 
@@ -495,6 +525,40 @@ export default function App() {
     }
 
     return response.json();
+  };
+
+  const ensureCourierProfile = async (token, profile) => {
+    if (!token || profile.role !== 'courier') {
+      return '';
+    }
+
+    const params = new URLSearchParams({ email: profile.email });
+    const lookup = await fetch(`/api/v1/couriers/by-email?${params.toString()}`, {
+      headers: authHeaders(token),
+    });
+    if (lookup.ok) {
+      const data = await lookup.json();
+      return data.courier_id || '';
+    }
+    if (lookup.status !== 404) {
+      throw new Error((await lookup.text()) || `HTTP ${lookup.status}`);
+    }
+
+    const create = await fetch('/api/v1/couriers/register', {
+      method: 'POST',
+      headers: authHeaders(token, true),
+      body: JSON.stringify({
+        email: profile.email,
+        full_name: profile.name,
+        phone: profile.phone,
+        transport_type: profile.transportType || 'bicycle',
+      }),
+    });
+    if (!create.ok) {
+      throw new Error((await create.text()) || `HTTP ${create.status}`);
+    }
+    const data = await create.json();
+    return data.courier_id || '';
   };
 
   const handleAuthSubmit = async (event) => {
@@ -566,15 +630,17 @@ export default function App() {
         try {
           const loginData = await loginWithCredentials(authForm.email.trim(), authForm.password);
 
-          updateSession({
-            token: loginData.token || '',
-            profile: {
-              ...nextProfile,
-              role: loginData.role || nextProfile.role,
-              courierId: loginData.courier_id || nextProfile.courierId,
-            },
-          });
-          setCurrentView(nextProfile.role === 'courier' ? 'courier' : 'order');
+          const loggedProfile = {
+            ...nextProfile,
+            name: loginData.name || nextProfile.name,
+            phone: loginData.phone || nextProfile.phone,
+            email: loginData.email || nextProfile.email,
+            role: loginData.role || nextProfile.role,
+          };
+          loggedProfile.courierId = await ensureCourierProfile(loginData.token || '', loggedProfile);
+          updateSession({ token: loginData.token || '', profile: loggedProfile });
+          setProfileForm(loggedProfile);
+          setCurrentView(loggedProfile.role === 'courier' ? 'courier' : 'order');
           setAuthNotice('Регистрация и вход выполнены.');
         } catch (loginError) {
           const message = loginError instanceof Error ? loginError.message : 'неизвестная ошибка';
@@ -585,13 +651,14 @@ export default function App() {
       } else {
         const loginData = await loginWithCredentials(authForm.login.trim(), authForm.password);
         const nextProfile = {
-          name: session.profile.name || '',
-          phone: session.profile.phone || '',
-          email: authForm.login.includes('@') ? authForm.login.trim() : session.profile.email || '',
+          name: loginData.name || session.profile.name || '',
+          phone: loginData.phone || session.profile.phone || '',
+          email: loginData.email || (authForm.login.includes('@') ? authForm.login.trim() : session.profile.email || ''),
           role: loginData.role || session.profile.role || 'client',
-          courierId: loginData.courier_id || session.profile.courierId || '',
+          courierId: '',
           transportType: session.profile.transportType || 'bicycle',
         };
+        nextProfile.courierId = await ensureCourierProfile(loginData.token || '', nextProfile);
 
         updateSession({ token: loginData.token || '', profile: nextProfile });
         setProfileForm(nextProfile);
@@ -837,18 +904,16 @@ export default function App() {
       setCourierError('');
 
       try {
-        const response = await fetch('/api/v1/orders', { signal: controller.signal });
+        const response = await fetch('/api/v1/orders', { signal: controller.signal, headers: authHeaders(session.token) });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
 
         const data = await response.json();
-        const availableOrders = Array.isArray(data)
-          ? data
+        const availableOrders = extractOrders(data)
             .map(normalizeBackendOrder)
             .filter((order) => !['Курьер назначен', 'Забран у отправителя', 'Курьер в пути', 'Доставлен', 'Отменён'].includes(order.status))
-            .filter((order) => !acceptedCourierOrderIds.includes(order.id))
-          : [];
+            .filter((order) => !acceptedCourierOrderIds.includes(order.id));
 
         setCourierOrders(availableOrders);
         setCourierActiveOrderId((prev) => prev || availableOrders[0]?.id || '');
@@ -979,7 +1044,7 @@ export default function App() {
       const courierId = await resolveCourierId();
       const response = await fetch('/api/v1/couriers/availability', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(session.token, true),
         body: JSON.stringify({
           courier_id: courierId,
           is_online: !courierOnline,
@@ -1009,7 +1074,7 @@ export default function App() {
       const courierId = await resolveCourierId();
       const response = await fetch(`/api/v1/orders/${order.id}/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(session.token, true),
         body: JSON.stringify({
           courier_id: courierId,
           mode: 'manual',
@@ -1051,7 +1116,7 @@ export default function App() {
       const courierId = await resolveCourierId();
       const response = await fetch(`/api/v1/orders/${order.id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(session.token, true),
         body: JSON.stringify({
           courier_id: courierId,
           status: nextStatus,
@@ -1586,9 +1651,9 @@ export default function App() {
         apartment: '',
         comment: '',
       },
+      from_coords: { latitude: fromCoords[0], longitude: fromCoords[1] },
+      to_coords: { latitude: toCoords[0], longitude: toCoords[1] },
       weight: parseFloat(form.weight) || 0,
-      distance_km: formRouteInfo.distanceKm || 0,
-      user_id: '00000000-0000-0000-0000-000000000000',
     };
 
     try {
@@ -1606,7 +1671,8 @@ export default function App() {
         throw new Error(body || `HTTP ${response.status}`);
       }
 
-      const createdOrder = await response.json();
+      const createdPayload = await response.json();
+      const createdOrder = createdPayload.order || createdPayload;
 
       const order = {
         id: createdOrder.id || `DLV-${Math.floor(10000 + Math.random() * 89999)}`,
@@ -1615,7 +1681,7 @@ export default function App() {
         fromCoords: fromCoords,
         toCoords: toCoords,
         status: 'Создан',
-        eta: `${Math.max(1, Math.round(formRouteInfo.durationMin || (12 + Math.random() * 20)))} мин`,
+        eta: `${Math.max(1, Math.round(createdPayload.estimated_duration_minutes || formRouteInfo.durationMin || 1))} мин`,
         price: createdOrder.price,
         weight: createdOrder.weight,
       };

@@ -115,14 +115,22 @@ func (m *mockOrderRepo) GetByID(_ context.Context, id string) (*models.Order, er
 func (m *mockOrderRepo) List(_ context.Context) ([]models.Order, error)    { return nil, nil }
 func (m *mockOrderRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
+func withRole(req *http.Request, userID, role string) *http.Request {
+	return req.WithContext(middleware.WithIdentity(req.Context(), userID, role))
+}
+
 func withUser(req *http.Request, userID string) *http.Request {
-	return req.WithContext(middleware.WithIdentity(req.Context(), userID, "client"))
+	return withRole(req, userID, "client")
+}
+
+func withCourier(req *http.Request, userID string) *http.Request {
+	return withRole(req, userID, "courier")
 }
 
 func TestRegisterCourierUsesAuthenticatedUser(t *testing.T) {
 	repo := &mockCourierRepo{}
 	h := NewCourierHandler(repo, nil, nil)
-	req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/register", strings.NewReader(`{"email":"courier@example.com","full_name":"Test Courier","phone":"+79990000000","transport_type":"bicycle"}`)), "42")
+	req := withCourier(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/register", strings.NewReader(`{"email":"courier@example.com","full_name":"Test Courier","phone":"+79990000000","transport_type":"bicycle"}`)), "42")
 	w := httptest.NewRecorder()
 
 	h.RegisterCourier(w, req)
@@ -137,7 +145,7 @@ func TestRegisterCourierUsesAuthenticatedUser(t *testing.T) {
 func TestToggleAvailabilityRejectsAnotherCourier(t *testing.T) {
 	courier := &models.Courier{ID: uuid.NewString(), UserID: "42", TransportType: "bicycle"}
 	h := NewCourierHandler(&mockCourierRepo{courier: courier}, nil, nil)
-	req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/availability", strings.NewReader(`{"courier_id":"another","is_online":true}`)), "42")
+	req := withCourier(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/availability", strings.NewReader(`{"courier_id":"another","is_online":true}`)), "42")
 	w := httptest.NewRecorder()
 
 	h.ToggleAvailability(w, req)
@@ -149,7 +157,7 @@ func TestToggleAvailabilityRejectsAnotherCourier(t *testing.T) {
 func TestUpdateLocationValidatesCoordinates(t *testing.T) {
 	courier := &models.Courier{ID: uuid.NewString(), UserID: "42", TransportType: "bicycle"}
 	h := NewCourierHandler(&mockCourierRepo{courier: courier}, nil, nil)
-	req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/location", strings.NewReader(`{"lat":95,"lon":37.6}`)), "42")
+	req := withCourier(httptest.NewRequest(http.MethodPost, "/api/v1/couriers/location", strings.NewReader(`{"lat":95,"lon":37.6}`)), "42")
 	w := httptest.NewRecorder()
 
 	h.UpdateLocation(w, req)
@@ -168,7 +176,7 @@ func TestAssignOrderUsesTransactionalRepository(t *testing.T) {
 		assignments,
 		&mockOrderRepo{order: &models.Order{ID: orderID, UserID: "42", DistanceKm: 20}},
 	)
-	req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/orders/"+orderID+"/assign", strings.NewReader(`{"courier_id":"`+courierID+`","mode":"manual"}`)), "42")
+	req := withCourier(httptest.NewRequest(http.MethodPost, "/api/v1/orders/"+orderID+"/assign", strings.NewReader(`{"courier_id":"`+courierID+`","mode":"manual"}`)), "77")
 	req.SetPathValue("orderId", orderID)
 	w := httptest.NewRecorder()
 
@@ -210,7 +218,7 @@ func TestUpdateOrderStatusUsesOwnedCourier(t *testing.T) {
 	courier := &models.Courier{ID: uuid.NewString(), UserID: "42"}
 	assignments := &mockAssignmentRepo{}
 	h := NewCourierHandler(&mockCourierRepo{courier: courier}, assignments, nil)
-	req := withUser(httptest.NewRequest(http.MethodPatch, "/api/v1/orders/"+orderID+"/status", strings.NewReader(`{"status":"at_pickup"}`)), "42")
+	req := withCourier(httptest.NewRequest(http.MethodPatch, "/api/v1/orders/"+orderID+"/status", strings.NewReader(`{"status":"at_pickup"}`)), "42")
 	req.SetPathValue("orderId", orderID)
 	w := httptest.NewRecorder()
 
