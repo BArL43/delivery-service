@@ -1,49 +1,43 @@
 package utils
 
 import (
-	"os"
 	"testing"
-
-	"github.com/golang-jwt/jwt/v5"
+	"time"
 )
 
-func TestGenerateToken(t *testing.T) {
-	fakeSecret := "test-super-secret-key"
-	os.Setenv("JWT_SECRET", fakeSecret)
-
-	defer os.Unsetenv("JWT_SECRET")
-
-	userID := 42
-	role := "courier"
-
-	tokenString, err := GenerateToken(userID, role)
+func TestTokenRoundTrip(t *testing.T) {
+	manager, err := NewTokenManager("test-secret-that-is-longer-than-32-bytes", "delivery-auth", time.Hour)
 	if err != nil {
-		t.Fatalf("Ожидалась успешная генерация, получена ошибка: %v", err)
+		t.Fatal(err)
 	}
-	if tokenString == "" {
-		t.Fatal("Сгенерированный токен оказался пустым")
-	}
-
-	parsedToken, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return []byte(fakeSecret), nil
-	})
-
+	token, err := manager.Generate(42, "courier")
 	if err != nil {
-		t.Fatalf("Не удалось расшифровать токен: %v", err)
+		t.Fatal(err)
 	}
-
-	claims, ok := parsedToken.Claims.(jwt.MapClaims)
-	if !ok || !parsedToken.Valid {
-		t.Fatal("Токен не валиден или не содержит MapClaims")
+	claims, err := manager.Parse(token)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	parsedUserID := int(claims["user_id"].(float64))
-	if parsedUserID != userID {
-		t.Errorf("Ожидался user_id %d, получено %d", userID, parsedUserID)
+	if claims.UserID != 42 || claims.Role != "courier" {
+		t.Fatalf("unexpected claims: %+v", claims)
 	}
+}
 
-	if claims["role"] != role {
-		t.Errorf("Ожидалась роль %s, получено %v", role, claims["role"])
+func TestTokenManagerRejectsShortSecret(t *testing.T) {
+	if _, err := NewTokenManager("short", "delivery-auth", time.Hour); err == nil {
+		t.Fatal("expected short secret error")
 	}
+}
 
+func TestTokenRejectsDifferentSecret(t *testing.T) {
+	issuer := "delivery-auth"
+	first, _ := NewTokenManager("first-secret-that-is-definitely-32-bytes-long", issuer, time.Hour)
+	second, _ := NewTokenManager("second-secret-that-is-definitely-32-byte-long", issuer, time.Hour)
+	token, err := first.Generate(7, "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Parse(token); err == nil {
+		t.Fatal("expected signature verification failure")
+	}
 }

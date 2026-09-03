@@ -1,120 +1,99 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: delivery-postgres
     environment:
       POSTGRES_DB: delivery
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-<<<<<<< HEAD
-      - ./backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
-=======
-      - ./delivery-service/backend/auth-service/migrations/001_create_users_table.sql:/docker-entrypoint-initdb.d/001_create_users_table.sql:ro
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d delivery"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  auth-migrate:
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-auth-service:${IMAGE_TAG:-latest}
+    environment:
+      AUTH_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/delivery?sslmode=disable
+    command: ["sh", "-c", "goose -dir /app/migrations postgres '$$AUTH_DB_DSN' up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  order-migrate:
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-order-service:${IMAGE_TAG:-latest}
+    environment:
+      ORDER_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/delivery?sslmode=disable
+    command: ["sh", "-c", "goose -dir /app/migrations postgres '$$ORDER_DB_DSN' up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   auth-service:
-    image: ${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG:-latest}
-    container_name: delivery-auth-service
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-auth-service:${IMAGE_TAG:-latest}
     environment:
       AUTH_PORT: "8081"
-      AUTH_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
-      JWT_SECRET: dev-secret-change-me
-      OSRM_BASE_URL: http://osrm:5000
+      AUTH_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/delivery?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ISSUER: ${JWT_ISSUER:-delivery-auth}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
     depends_on:
-      postgres:
-        condition: service_healthy
+      auth-migrate:
+        condition: service_completed_successfully
 
-<<<<<<< HEAD
-=======
   order-service:
-    image: ${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG:-latest}
-    container_name: delivery-order-service
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-order-service:${IMAGE_TAG:-latest}
     environment:
       ORDER_PORT: "8080"
-      ORDER_DB_DSN: postgres://postgres:postgres@postgres:5432/delivery?sslmode=disable
-      PRICING_BASE_RATE: "150"
-      PRICING_PER_KM_RATE: "20"
-      PRICING_PER_KG_RATE: "50"
+      ORDER_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/delivery?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ISSUER: ${JWT_ISSUER:-delivery-auth}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:-https://router.project-osrm.org}
+      PRICING_BASE_RATE: ${PRICING_BASE_RATE:-150}
+      PRICING_PER_KM_RATE: ${PRICING_PER_KM_RATE:-20}
+      PRICING_PER_KG_RATE: ${PRICING_PER_KG_RATE:-50}
     depends_on:
-      postgres:
+      order-migrate:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   frontend:
-    image: ${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG:-latest}
-    container_name: delivery-frontend
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-frontend:${IMAGE_TAG:-latest}
 
-  osrm-download:
-    image: curlimages/curl:8.8.0
-    container_name: delivery-osrm-download
-    restart: "no"
-    user: "0:0"
-    command: >
-      sh -lc "if [ ! -f /data/central-fed-district-latest.osm.pbf ]; then
-      curl -L --retry 5 --retry-delay 3 -o /data/central-fed-district-latest.osm.pbf https://download.geofabrik.de/russia/central-fed-district-latest.osm.pbf;
-      else echo 'OSRM source already downloaded'; fi"
-    volumes:
-      - osrm_data:/data
-
-  osrm-init:
-    image: osrm/osrm-backend:latest
-    container_name: delivery-osrm-init
-    restart: "no"
-    user: "0:0"
-    command: >
-      sh -lc "if [ ! -f /data/central-fed-district-latest.osrm ]; then
-      osrm-extract -p /opt/car.lua /data/central-fed-district-latest.osm.pbf &&
-      osrm-partition /data/central-fed-district-latest.osrm &&
-      osrm-customize /data/central-fed-district-latest.osrm;
-      else echo 'OSRM graph already prepared'; fi"
-    volumes:
-      - osrm_data:/data
+  proxy:
+    image: ${DOCKERHUB_USERNAME:?DOCKERHUB_USERNAME is required}/delivery-proxy:${IMAGE_TAG:-latest}
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
     depends_on:
-      osrm-download:
-        condition: service_completed_successfully
-
-  osrm:
-    image: osrm/osrm-backend:latest
-    container_name: delivery-osrm
-    command: osrm-routed --algorithm mld /data/central-fed-district-latest.osrm
-    volumes:
-      - osrm_data:/data
-    depends_on:
-      osrm-init:
-        condition: service_completed_successfully
-
-  nginx:
-    image: ${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG:-latest}
-    container_name: delivery-nginx
-    depends_on:
-      - frontend
       - auth-service
-<<<<<<< HEAD
-      - osrm
-    ports:
-      - "80:80"
-=======
       - order-service
+      - frontend
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - caddy_data:/data
       - caddy_config:/config
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
 volumes:
   postgres_data:
-  osrm_data:
-<<<<<<< HEAD
-=======
+  redis_data:
   caddy_data:
   caddy_config:
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab

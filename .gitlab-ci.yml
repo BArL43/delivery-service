@@ -15,25 +15,30 @@ variables:
 test_auth_service:
   stage: test
   image: golang:1.26-alpine
+  before_script:
+    - apk add --no-cache build-base
   script:
     - cd backend/auth-service
-    - go test ./...
+    - test -z "$(gofmt -l .)"
+    - go vet ./...
+    - go test -race ./...
     - go build ./...
 
 test_order_service:
   stage: test
   image: golang:1.25-alpine
+  before_script:
+    - apk add --no-cache build-base
   script:
     - cd backend/order-service
-    - go test ./...
+    - test -z "$(gofmt -l .)"
+    - go vet ./...
+    - go test -race ./...
     - go build ./...
 
 test_frontend:
   stage: test
-  image: node:20-alpine
-  cache:
-    paths:
-      - frontend/node_modules/
+  image: node:22-alpine
   script:
     - cd frontend
     - npm ci
@@ -51,9 +56,11 @@ build_and_push:
     - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin docker.io
   script:
     - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG} ./backend/auth-service
+    - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG} ./backend/order-service
     - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG} ./frontend
     - docker build -t docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG} -f Dockerfile.proxy .
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-auth-service:${IMAGE_TAG}
+    - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-order-service:${IMAGE_TAG}
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-frontend:${IMAGE_TAG}
     - docker push docker.io/${DOCKERHUB_USERNAME}/delivery-proxy:${IMAGE_TAG}
   rules:
@@ -67,8 +74,8 @@ deploy_to_server:
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
-    - ssh-keyscan -p $SSH_PORT -H $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+    - ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
   script:
-    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --force-recreate --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
+    - ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "cd /opt/delivery-service && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml pull && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml up -d --remove-orphans && docker compose --env-file .env.dockerhub -f docker-compose.hub.yml ps"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'

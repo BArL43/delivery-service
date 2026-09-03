@@ -1,85 +1,71 @@
 # Delivery Service
 
-Учебный full-stack проект сервиса доставки с двумя Go backend-сервисами, PostgreSQL, JWT-аутентификацией, контейнеризацией, CI/CD и observability-стеком.
+Учебный full-stack проект сервиса доставки, выполненный с фокусом на backend-разработку на Go. Репозиторий показывает работу с несколькими сервисами, PostgreSQL, Redis, JWT, Docker, CI/CD и observability.
 
-> Основной фокус проекта — backend-разработка на Go и эксплуатационная часть: разделение сервисов, работа с БД, авторизация, тестирование, метрики и структурированные логи.
+## Что внутри
 
-## Backend
+Система разделена на два Go-сервиса:
 
-Проект содержит два независимых Go-сервиса:
+- `auth-service` отвечает за регистрацию, логин и выпуск JWT;
+- `order-service` отвечает за заказы, курьеров, геокодирование, маршрутизацию и бизнес-метрики.
 
-- **auth-service** — регистрация и логин пользователей, JWT-аутентификация;
-- **order-service** — CRUD для заказов и курьеров, PostgreSQL и миграции.
-
-Структура backend:
+Входной трафик принимает Caddy. Данные хранятся в PostgreSQL, Redis используется как кеш геокодирования. Для маршрутов используется OSRM API.
 
 ```text
 backend/
 ├── auth-service/
-│   ├── cmd/
+│   ├── cmd/api/
 │   ├── internal/
-│   └── go.mod
+│   └── migrations/
 └── order-service/
+    ├── cmd/api/
     ├── internal/
-    ├── migrations/
-    ├── main.go
-    └── go.mod
+    └── migrations/
+
+frontend/            React + Vite
+observability/       Prometheus, Grafana, Loki, Promtail
+Caddyfile             reverse proxy
+Dockerfile.proxy      proxy image
+docker-compose.yml    local stack
 ```
 
-## Tech stack
+## Стек
 
-**Backend:** Go, REST API, PostgreSQL, JWT  
-**Infrastructure:** Docker, Docker Compose, nginx  
-**CI/CD:** GitLab CI/CD, Docker Hub, SSH deploy  
+**Backend:** Go, `net/http`, Gin, PostgreSQL, pgx, Redis, JWT  
+**Infrastructure:** Docker, Docker Compose, Caddy  
+**CI/CD:** GitHub Actions, GitLab CI/CD, Docker Hub  
 **Observability:** Prometheus, Grafana, Loki, Promtail  
 **Frontend:** React, Vite
 
 ## Что реализовано
 
-- отдельные auth-service и order-service;
 - REST API для авторизации, заказов и курьеров;
-- JWT-аутентификация;
-- PostgreSQL и миграции;
-- Docker-образы и Docker Compose;
-- nginx как reverse proxy;
-- CI/CD pipeline: test → build → Docker image → deploy;
-- HTTP-метрики и business-метрики в Prometheus;
-- JSON-логирование приложений;
-- централизованные логи через Loki/Promtail;
-- Grafana dashboards для инфраструктурных и бизнес-метрик.
-
-## Observability
-
-Prometheus собирает метрики обоих backend-сервисов. Среди них:
-
-- `delivery_http_requests_total` — число HTTP-запросов;
-- `delivery_http_request_duration_seconds` — latency;
-- `delivery_http_inflight_requests` — активные запросы;
-- `delivery_business_events_total` — бизнес-события с labels `event` и `result`.
-
-HTTP-запросы и бизнес-события логируются в JSON. Loki хранит логи, а Grafana используется для анализа метрик и логов.
-
-## CI/CD
-
-`.gitlab-ci.yml` выполняет:
-
-1. тестирование Go-сервисов;
-2. сборку frontend;
-3. сборку Docker-образов;
-4. публикацию образов в Docker Hub;
-5. обновление compose-стека на сервере по SSH.
+- отдельные auth-service и order-service;
+- PostgreSQL, SQL-миграции и транзакционные сценарии;
+- JWT-аутентификация и проверка токена в order-service;
+- Redis-кеш для геокодирования с fallback при недоступности кеша;
+- интеграции с OpenStreetMap Nominatim и OSRM;
+- graceful shutdown и HTTP timeouts;
+- health checks;
+- unit-тесты;
+- multi-stage Docker-сборки с непривилегированным runtime-пользователем;
+- CI для форматирования, `go vet`, race-тестов, сборки сервисов, frontend и Docker-образов;
+- Prometheus-метрики, структурированные логи и Grafana dashboards.
 
 ## Локальный запуск
 
-Самый простой способ — Docker Compose:
+Требования: Docker и Docker Compose.
 
 ```bash
 git clone https://github.com/BArL43/delivery-service.git
 cd delivery-service
+cp .env.example .env
 docker compose up --build
 ```
 
-После запуска nginx принимает запросы на порту `80`.
+`.env.example` содержит только локальные значения. Для любого публичного окружения нужно заменить `JWT_SECRET`, пароль PostgreSQL и доменные настройки.
+
+После запуска приложение доступно через Caddy на `http://localhost`.
 
 Остановка:
 
@@ -87,40 +73,44 @@ docker compose up --build
 docker compose down
 ```
 
-### Запуск Go-сервисов отдельно
-
-Order service:
-
-```bash
-cd backend/order-service
-go mod tidy
-go run .
-```
+## Запуск сервисов отдельно
 
 Auth service:
 
 ```bash
 cd backend/auth-service
-go mod tidy
-go run ./cmd/api
+JWT_SECRET='local-development-secret-change-me-before-production' go run ./cmd/api
 ```
 
-Пример конфигурации auth-service:
+Order service:
 
-```env
-AUTH_PORT=8081
-AUTH_DB_DSN=postgres://user:pass@localhost:5432/dbname?sslmode=disable
-JWT_SECRET=replace-me
+```bash
+cd backend/order-service
+JWT_SECRET='local-development-secret-change-me-before-production' go run ./cmd/api
 ```
 
-## Мониторинг локально
+Для запуска вне Docker также нужны PostgreSQL и, для кеширования геокодирования, Redis.
+
+## Проверки
+
+```bash
+cd backend/auth-service && go test ./... && go vet ./...
+cd backend/order-service && go test ./... && go vet ./...
+cd frontend && npm ci && npm run build
+```
+
+GitHub Actions дополнительно запускает race detector и проверяет сборку Docker-образов и `docker compose config`.
+
+## Observability
+
+Order service экспортирует Prometheus-метрики, включая количество HTTP-запросов, latency, число активных запросов и бизнес-события. Конфигурации Prometheus, Grafana, Loki и Promtail находятся в `observability/`.
+
+Локально observability-стек можно поднять отдельно:
 
 ```bash
 docker compose -f docker-compose.observability.yml up -d
 ```
 
-После запуска Grafana доступна на `http://localhost:3000`.
+## О проекте
 
-## Context
-
-Проект выполнен в рамках учебной практики по backend-разработке. Репозиторий сохранён как портфолио-проект с акцентом на Go, инфраструктуру и эксплуатацию backend-сервисов.
+Проект выполнен в рамках учебной практики по backend-разработке. Это не коммерческий production-сервис: репозиторий приведён в порядок как портфолио-проект с акцентом на Go, архитектуру backend-сервисов, работу с БД, инфраструктуру и качество кода.

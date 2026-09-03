@@ -1,374 +1,139 @@
 package main
 
 import (
+	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"projectYandexLyceumFinal/internal/handlers"
+	"projectYandexLyceumFinal/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	dsn := getEnv("AUTH_DB_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
-	port := getEnv("AUTH_PORT", "8081")
-	osrmBaseURL := getEnv("OSRM_BASE_URL", "http://osrm:5000")
-	geocoderBaseURL := getEnv("GEOCODER_BASE_URL", "https://nominatim.openstreetmap.org")
+	if err := run(); err != nil {
+		log.Fatalf("auth-service stopped: %v", err)
+	}
+}
+
+func run() error {
+	dsn := env("AUTH_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
+	port := env("AUTH_PORT", "8081")
+	issuer := env("JWT_ISSUER", "delivery-auth")
+	tokens, err := utils.NewTokenManager(os.Getenv("JWT_SECRET"), issuer, 12*time.Hour)
+	if err != nil {
+		return err
+	}
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatalf("failed to open db connection: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(10 * time.Minute)
+	db.SetConnMaxLifetime(time.Hour)
 
-	if err := db.Ping(); err != nil {
-		log.Fatalf("failed to ping db: %v", err)
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelPing()
+	if err := db.PingContext(pingCtx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
 	}
 
-	handlers.SetDB(db)
-
-	r := gin.Default()
-	r.Use(corsMiddleware())
-
-	r.GET("/health", func(c *gin.Context) {
+	authHandler := handlers.New(db, tokens)
+	gin.SetMode(env("GIN_MODE", gin.ReleaseMode))
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery(), corsMiddleware(parseOrigins(env("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"))))
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.GET("/health", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database unavailable"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	r.GET("/api/route", makeRouteHandler(osrmBaseURL))
-	r.GET("/api/geocode", makeGeocodeHandler(geocoderBaseURL))
-	r.GET("/api/geocode/suggest", makeGeocodeSuggestHandler(geocoderBaseURL))
-	r.POST("/api/auth/register", handlers.Register)
-	r.POST("/api/auth/login", handlers.Login)
 
-	log.Printf("auth-service listening on :%s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("failed to run server: %v", err)
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
-}
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("auth-service listening on :%s", port)
+		serverErr <- server.ListenAndServe()
+	}()
 
-func makeGeocodeSuggestHandler(geocoderBaseURL string) gin.HandlerFunc {
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	return func(c *gin.Context) {
-		query := strings.TrimSpace(c.Query("query"))
-		if len([]rune(query)) < 3 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "query must contain at least 3 characters"})
-			return
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case <-signalCtx.Done():
+		log.Println("auth-service shutdown requested")
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
 		}
-
-		baseURL := strings.TrimRight(geocoderBaseURL, "/")
-		queryVariants := []string{query}
-		lower := strings.ToLower(query)
-		if strings.HasPrefix(lower, "ул ") {
-			queryVariants = append(queryVariants, "улица "+strings.TrimSpace(query[4:]))
-		}
-		if strings.HasPrefix(lower, "ул. ") {
-			queryVariants = append(queryVariants, "улица "+strings.TrimSpace(query[5:]))
-		}
-		if strings.HasPrefix(lower, "пр ") || strings.HasPrefix(lower, "пр. ") {
-			parts := strings.Fields(query)
-			if len(parts) > 1 {
-				queryVariants = append(queryVariants, "проспект "+strings.Join(parts[1:], " "))
-			}
-		}
-		if !strings.Contains(lower, "москва") && !strings.Contains(lower, "moscow") {
-			queryVariants = append(queryVariants, query+", Москва")
-			queryVariants = append(queryVariants, query+", Москва, Россия")
-		}
-
-		suggestions := make([]gin.H, 0, 8)
-		seen := make(map[string]struct{})
-
-		for _, variant := range queryVariants {
-			params := url.Values{}
-			params.Set("format", "json")
-			params.Set("limit", "5")
-			params.Set("countrycodes", "ru")
-			params.Set("q", variant)
-			params.Set("viewbox", "36.80,56.10,38.40,55.10")
-			params.Set("bounded", "0")
-
-			requestURL := fmt.Sprintf("%s/search?%s", baseURL, params.Encode())
-			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, requestURL, nil)
-			if err != nil {
-				continue
-			}
-			req.Header.Set("User-Agent", "delivery-service/1.0")
-			req.Header.Set("Accept-Language", "ru")
-
-			resp, err := client.Do(req)
-			if err != nil {
-				continue
-			}
-
-			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil || resp.StatusCode != http.StatusOK {
-				continue
-			}
-
-			var items []struct {
-				Lat         string `json:"lat"`
-				Lon         string `json:"lon"`
-				DisplayName string `json:"display_name"`
-			}
-
-			if err := json.Unmarshal(body, &items); err != nil {
-				continue
-			}
-
-			for _, item := range items {
-				lat, err := strconv.ParseFloat(item.Lat, 64)
-				if err != nil {
-					continue
-				}
-				lon, err := strconv.ParseFloat(item.Lon, 64)
-				if err != nil {
-					continue
-				}
-
-				key := fmt.Sprintf("%0.6f:%0.6f", lat, lon)
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-
-				suggestions = append(suggestions, gin.H{
-					"display_name": item.DisplayName,
-					"lat":          lat,
-					"lon":          lon,
-				})
-
-				if len(suggestions) >= 8 {
-					c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
-					return
-				}
-			}
-		}
-
-		c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
+		return nil
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return server.Shutdown(shutdownCtx)
 }
 
-func makeGeocodeHandler(geocoderBaseURL string) gin.HandlerFunc {
-	client := &http.Client{Timeout: 15 * time.Second}
+func env(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
 
+func parseOrigins(value string) map[string]struct{} {
+	origins := make(map[string]struct{})
+	for _, origin := range strings.Split(value, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			origins[origin] = struct{}{}
+		}
+	}
+	return origins
+}
+
+func corsMiddleware(allowed map[string]struct{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		address := strings.TrimSpace(c.Query("address"))
-		if address == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing query parameter: address"})
-			return
-		}
-
-		baseURL := strings.TrimRight(geocoderBaseURL, "/")
-		queries := []string{address}
-		lowerAddress := strings.ToLower(address)
-		if !strings.Contains(lowerAddress, "москва") && !strings.Contains(lowerAddress, "moscow") {
-			queries = append(queries, address+", Москва")
-			queries = append(queries, address+", Москва, Россия")
-		}
-
-		for _, query := range queries {
-			params := url.Values{}
-			params.Set("format", "json")
-			params.Set("limit", "1")
-			params.Set("countrycodes", "ru")
-			params.Set("q", query)
-			params.Set("viewbox", "36.80,56.10,38.40,55.10")
-			params.Set("bounded", "0")
-
-			requestURL := fmt.Sprintf("%s/search?%s", baseURL, params.Encode())
-
-			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, requestURL, nil)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare geocoder request"})
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			if _, ok := allowed[origin]; !ok {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "origin is not allowed"})
 				return
 			}
-			req.Header.Set("User-Agent", "delivery-service/1.0")
-			req.Header.Set("Accept-Language", "ru")
-
-			resp, err := client.Do(req)
-			if err != nil {
-				continue
-			}
-
-			body, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if readErr != nil {
-				continue
-			}
-
-			if resp.StatusCode != http.StatusOK {
-				continue
-			}
-
-			var items []struct {
-				Lat         string `json:"lat"`
-				Lon         string `json:"lon"`
-				DisplayName string `json:"display_name"`
-			}
-
-			if err := json.Unmarshal(body, &items); err != nil {
-				continue
-			}
-
-			if len(items) == 0 {
-				continue
-			}
-
-			lat, err := strconv.ParseFloat(items[0].Lat, 64)
-			if err != nil {
-				continue
-			}
-			lon, err := strconv.ParseFloat(items[0].Lon, 64)
-			if err != nil {
-				continue
-			}
-
-			c.JSON(http.StatusOK, gin.H{
-				"lat":          lat,
-				"lon":          lon,
-				"display_name": items[0].DisplayName,
-			})
-			return
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		}
-
-		c.JSON(http.StatusNotFound, gin.H{"error": "address not found"})
-	}
-}
-
-func makeRouteHandler(osrmBaseURL string) gin.HandlerFunc {
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	return func(c *gin.Context) {
-		fromLat, err := parseFloatQuery(c, "fromLat")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		fromLon, err := parseFloatQuery(c, "fromLon")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		toLat, err := parseFloatQuery(c, "toLat")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		toLon, err := parseFloatQuery(c, "toLon")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		baseURL := strings.TrimRight(osrmBaseURL, "/")
-		requestURL := fmt.Sprintf(
-			"%s/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson",
-			baseURL,
-			fromLon,
-			fromLat,
-			toLon,
-			toLat,
-		)
-
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, requestURL, nil)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare OSRM request"})
-			return
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to call OSRM"})
-			return
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read OSRM response"})
-			return
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "OSRM returned an error", "details": string(body)})
-			return
-		}
-
-		var osrmResp struct {
-			Routes []struct {
-				Distance float64 `json:"distance"`
-				Duration float64 `json:"duration"`
-				Geometry struct {
-					Coordinates [][]float64 `json:"coordinates"`
-				} `json:"geometry"`
-			} `json:"routes"`
-		}
-
-		if err := json.Unmarshal(body, &osrmResp); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to parse OSRM response"})
-			return
-		}
-
-		if len(osrmResp.Routes) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
-			return
-		}
-
-		route := osrmResp.Routes[0]
-		c.JSON(http.StatusOK, gin.H{
-			"distance": route.Distance,
-			"duration": route.Duration,
-			"geometry": route.Geometry,
-		})
-	}
-}
-
-func parseFloatQuery(c *gin.Context, key string) (float64, error) {
-	raw := c.Query(key)
-	if raw == "" {
-		return 0, fmt.Errorf("missing query parameter: %s", key)
-	}
-
-	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid query parameter %s", key)
-	}
-
-	return value, nil
-}
-
-func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-
 		c.Next()
 	}
-
 }

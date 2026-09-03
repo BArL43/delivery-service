@@ -2,16 +2,25 @@ package handlers
 
 import (
 	"encoding/json"
-<<<<<<< HEAD
-	"fmt"
+	"errors"
+	"io"
+	"math"
 	"net/http"
-	"order-service/internal/models"
-	"order-service/internal/pricing"
-	"order-service/internal/distance"
-	"order-service/internal/storage"
 	"strconv"
-	"time"
+	"strings"
+
+	"order-service/internal/distance"
+	"order-service/internal/middleware"
+	"order-service/internal/models"
+	"order-service/internal/observability"
+	"order-service/internal/pricing"
+	"order-service/internal/storage"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
+
+const maxJSONBody = 1 << 20
 
 type CreateOrderRequest struct {
 	FromAddress models.Address     `json:"from_address"`
@@ -19,258 +28,155 @@ type CreateOrderRequest struct {
 	FromCoords  models.Coordinates `json:"from_coords"`
 	ToCoords    models.Coordinates `json:"to_coords"`
 	Weight      float64            `json:"weight"`
-=======
-	"net/http"
-	"strings"
-
-	"order-service/internal/models"
-	"order-service/internal/observability"
-	"order-service/internal/pricing"
-	"order-service/internal/storage"
-)
-
-type CreateOrderRequest struct {
-	FromAddress models.Address `json:"from_address"`
-	ToAddress   models.Address `json:"to_address"`
-	Weight      float64        `json:"weight"`
-	DistanceKm  float64        `json:"distance_km"`
-	UserID      string         `json:"user_id"`
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 }
 
 type OrdersHandler struct {
-	repo storage.OrderRepository
+	repo storage.UserOrderRepository
 	calc *pricing.Calculator
 }
 
-func NewOrdersHandler(repo storage.OrderRepository, calc *pricing.Calculator) *OrdersHandler {
-	return &OrdersHandler{
-		repo: repo,
-		calc: calc,
-	}
+func NewOrdersHandler(repo storage.UserOrderRepository, calc *pricing.Calculator) *OrdersHandler {
+	return &OrdersHandler{repo: repo, calc: calc}
 }
 
 func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
-<<<<<<< HEAD
-	userID, ok := r.Context().Value("userID").(string)
+	userID, ok := middleware.UserID(r.Context())
 	if !ok {
-		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var req CreateOrderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-	if req.Weight <= 0 {
-		http.Error(w, `{"error": "weight must be positive"}`, http.StatusBadRequest)
-		return
-	}
-	// Calculate price server-side based on weight and route distance
-	dist := distance.CalculateDistance(req.FromCoords.Latitude, req.FromCoords.Longitude, req.ToCoords.Latitude, req.ToCoords.Longitude)
-	price := h.calc.Calculate(dist, req.Weight)
-
-	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.FromCoords, req.ToCoords, req.Weight, price)
-	if err := h.repo.Create(r.Context(), order); err != nil {
-		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
-		return
-	}
-	resp := models.OrderResponse{
-		OrderId:           order.ID,
-		InitialStatus:     order.Status,
-		EstimatedDistance: distance,
-		EstimatedDuration: time.Duration(distance / 15 * float64(time.Hour)),
-		EstimatedPrice:    price,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
-=======
-	var req CreateOrderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("order_create_decode_error", "error", err)
+	if err := decodeJSON(w, r, &req); err != nil {
 		observability.Stats().ObserveBusiness("order_create", "failure")
-		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	// Generate default user_id if not provided
-	userID := req.UserID
-	if userID == "" {
-		userID = "00000000-0000-0000-0000-000000000000"
-	}
-
-	// Calculate price server-side based on weight and route distance
-	price := h.calc.Calculate(req.DistanceKm, req.Weight)
-
-	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.Weight, price)
-	if err := h.repo.Create(r.Context(), order); err != nil {
-		observability.Logger().Error("order_create_failed", "error", err, "user_id", userID, "price", price)
+	if err := validateOrderRequest(req); err != nil {
 		observability.Stats().ObserveBusiness("order_create", "failure")
-		http.Error(w, `{"error": "failed to create order"}`, http.StatusInternalServerError)
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	observability.Logger().Info("order_created",
-		"order_id", order.ID,
-		"user_id", userID,
-		"price", price,
-		"weight", req.Weight,
-		"distance_km", req.DistanceKm,
+	distanceKm := distance.CalculateDistance(
+		req.FromCoords.Latitude, req.FromCoords.Longitude,
+		req.ToCoords.Latitude, req.ToCoords.Longitude,
 	)
+	price := h.calc.Calculate(distanceKm, req.Weight)
+	order := models.NewOrder(userID, req.FromAddress, req.ToAddress, req.FromCoords, req.ToCoords, req.Weight, distanceKm, price)
+	if err := h.repo.Create(r.Context(), order); err != nil {
+		observability.Logger().Error("order_create_failed", "error", err, "user_id", userID)
+		observability.Stats().ObserveBusiness("order_create", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to create order")
+		return
+	}
 	observability.Stats().ObserveBusiness("order_create", "success")
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(order)
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+	jsonResponse(w, http.StatusCreated, map[string]any{
+		"order": order,
+		"estimated_duration_minutes": int(math.Ceil(distanceKm / 15 * 60)),
+	})
 }
 
-// GET /orders/{id} - Get one
 func (h *OrdersHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
-<<<<<<< HEAD
-	userId, ok := r.Context().Value("userID").(string)
+	userID, ok := middleware.UserID(r.Context())
 	if !ok {
-		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-
-	orderId := r.PathValue("id")
-	if orderId == "" {
-		http.Error(w, `{"error": "id is required"}`, http.StatusBadRequest)
+	id := strings.TrimSpace(r.PathValue("id"))
+	if _, err := uuid.Parse(id); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid order id")
 		return
 	}
-
-	order, err := h.repo.GetByID(r.Context(), orderId, userId)
-=======
-	id := strings.TrimPrefix(r.URL.Path, "/orders/")
-	id = strings.TrimSuffix(id, "/")
-
 	order, err := h.repo.GetByID(r.Context(), id)
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
-	if err != nil {
-		http.Error(w, `{"error": "not found"}`, http.StatusNotFound)
+	if errors.Is(err, pgx.ErrNoRows) {
+		jsonError(w, http.StatusNotFound, "order not found")
 		return
 	}
-
-<<<<<<< HEAD
-	resp := models.OrderResponse{
-		OrderId:           order.ID,
-		InitialStatus:     order.Status,
-		EstimatedDistance: pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
-		EstimatedDuration: time.Duration(pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
-		EstimatedPrice:    order.Price,
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "failed to get order")
+		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-=======
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(order)
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+	if order.UserID != userID {
+		jsonError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, order)
 }
 
-// GET /orders/{id} - Get all
 func (h *OrdersHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
-<<<<<<< HEAD
-	userID, ok := r.Context().Value("userID").(string)
+	userID, ok := middleware.UserID(r.Context())
 	if !ok {
-		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-
-	query := r.URL.Query()
-	sort := query.Get("sort")
-	status := query.Get("status")
-
-	page, _ := strconv.Atoi(query.Get("page"))
-	if page < 1 {
-		page = 1
+	page := parseBoundedInt(r.URL.Query().Get("page"), 1, 1, 1_000_000)
+	limit := parseBoundedInt(r.URL.Query().Get("limit"), 20, 1, 100)
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status != "" && !validOrderStatus(status) {
+		jsonError(w, http.StatusBadRequest, "invalid status")
+		return
 	}
-
-	limit, _ := strconv.Atoi(query.Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 10
+	sort := strings.TrimSpace(r.URL.Query().Get("sort"))
+	if sort != "" && sort != "price_asc" && sort != "price_desc" {
+		jsonError(w, http.StatusBadRequest, "invalid sort")
+		return
 	}
-
-	orders, total, err := h.repo.List(r.Context(), userID, status, page, limit, sort)
-=======
-	orders, err := h.repo.List(r.Context())
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+	orders, total, err := h.repo.ListByUser(r.Context(), userID, status, page, limit, sort)
 	if err != nil {
-		http.Error(w, `{"error": "failed to list orders"}`, http.StatusInternalServerError)
+		jsonError(w, http.StatusInternalServerError, "failed to list orders")
 		return
 	}
-
-<<<<<<< HEAD
-	var items []models.OrderResponse
-	for _, order := range orders {
-		items = append(items, models.OrderResponse{
-			OrderId:           order.ID,
-			InitialStatus:     order.Status,
-			EstimatedDistance: pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude),
-			EstimatedDuration: time.Duration(pricing.CalculateDistance(order.FromCoords.Latitude, order.FromCoords.Longitude, order.ToCoords.Latitude, order.ToCoords.Longitude) / 15 * float64(time.Hour)),
-			EstimatedPrice:    order.Price,
-		})
-	}
-	resp := models.OrderListResponse{
-		Orders: items,
-		Total:  total,
-		Page:   page,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	jsonResponse(w, http.StatusOK, map[string]any{"orders": orders, "total": total, "page": page, "limit": limit})
 }
 
-func (h *OrdersHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("userID").(string)
-	if !ok {
-		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
-		return
+func validateOrderRequest(req CreateOrderRequest) error {
+	if strings.TrimSpace(req.FromAddress.City) == "" || strings.TrimSpace(req.FromAddress.Street) == "" ||
+		strings.TrimSpace(req.ToAddress.City) == "" || strings.TrimSpace(req.ToAddress.Street) == "" {
+		return errors.New("from_address and to_address must contain city and street")
 	}
-
-	orderID := r.PathValue("orderId")
-	if orderID == "" {
-		http.Error(w, `{"error": "missing order ID"}`, http.StatusBadRequest)
-		return
+	if req.Weight <= 0 || req.Weight > 100 || math.IsNaN(req.Weight) || math.IsInf(req.Weight, 0) {
+		return errors.New("weight must be greater than 0 and at most 100 kg")
 	}
-
-	var req models.UpdateOrderStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
-		return
+	if !validCoordinates(req.FromCoords) || !validCoordinates(req.ToCoords) {
+		return errors.New("invalid coordinates")
 	}
-	defer r.Body.Close()
+	return nil
+}
 
-	currentStatus, err := h.repo.GetCurrentStatus(r.Context(), orderID, userID)
-	if err != nil {
-		http.Error(w, `{"error": "order not found"}`, http.StatusNotFound)
-		return
+func validCoordinates(coords models.Coordinates) bool {
+	return !math.IsNaN(coords.Latitude) && !math.IsNaN(coords.Longitude) &&
+		!math.IsInf(coords.Latitude, 0) && !math.IsInf(coords.Longitude, 0) &&
+		coords.Latitude >= -90 && coords.Latitude <= 90 && coords.Longitude >= -180 && coords.Longitude <= 180
+}
+
+func validOrderStatus(status string) bool {
+	switch status {
+	case models.StatusCreated, models.StatusAssigned, models.StatusAtPickup, models.StatusInProgress, models.StatusDelivered, models.StatusCancelled:
+		return true
+	default:
+		return false
 	}
+}
 
-	if !models.IsValidTransition(currentStatus, req.NewStatus) {
-		errMsg := fmt.Sprintf(`{"error": "invalid status transition from %s to %s"}`, currentStatus, req.NewStatus)
-		http.Error(w, errMsg, http.StatusConflict)
-		return
+func parseBoundedInt(raw string, fallback, minValue, maxValue int) int {
+	if raw == "" {
+		return fallback
 	}
-
-	err = h.repo.UpdateStatus(r.Context(), orderID, userID, req.NewStatus, req.Reason)
-	if err != nil {
-		http.Error(w, `{"error": "failed to update status"}`, http.StatusInternalServerError)
-		return
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minValue || value > maxValue {
+		return fallback
 	}
+	return value
+}
 
-	resp := models.UpdateOrderStatusResponse{
-		UpdatedStatus: req.NewStatus,
-		ChangedAt:     time.Now(),
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
-=======
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(orders)
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain exactly one JSON object")
+	}
+	return nil
 }

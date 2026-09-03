@@ -1,9 +1,5 @@
 -- +goose Up
--- +goose StatementBegin
-ALTER TABLE orders ADD COLUMN weight DECIMAL(10,2) NOT NULL DEFAULT 0;
--- +goose StatementEnd
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (weight >= 0);
 
 -- +goose Down
--- +goose StatementBegin
-ALTER TABLE orders DROP COLUMN weight;
--- +goose StatementEnd
+ALTER TABLE orders DROP COLUMN IF EXISTS weight;

@@ -6,139 +6,56 @@ import (
 	"github.com/google/uuid"
 )
 
-<<<<<<< HEAD
 const (
-	StatusCreated         = "CREATED"
-	StatusSearching       = "SEARCHING_COURIER"
-	StatusCourierAssigned = "COURIER_ASSIGNED"
-	StatusPickedUp        = "PICKED_UP"
-	StatusDelivered       = "DELIVERED"
-	StatusCancelled       = "CANCELLED"
+	StatusCreated    = "created"
+	StatusAssigned   = "assigned"
+	StatusAtPickup   = "at_pickup"
+	StatusInProgress = "in_progress"
+	StatusDelivered  = "delivered"
+	StatusCancelled  = "cancelled"
 )
 
-var AllowedTransitions = map[string][]string{
-	StatusCreated:         {StatusSearching, StatusCancelled},
-	StatusSearching:       {StatusCourierAssigned, StatusCancelled},
-	StatusCourierAssigned: {StatusPickedUp, StatusCancelled},
-	StatusPickedUp:        {StatusDelivered, StatusCancelled},
-	StatusDelivered:       {},
-	StatusCancelled:       {},
-}
-
-func IsValidTransition(from, to string) bool {
-	allowed, exists := AllowedTransitions[from]
-	if !exists {
-		return false
-	}
-	for _, status := range allowed {
-		if status == to {
-			return true
-		}
-	}
-	return false
-}
-
-type UpdateOrderStatusRequest struct {
-	NewStatus string `json:"new_status" binding:"required"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-type UpdateOrderStatusResponse struct {
-	UpdatedStatus string    `json:"updated_status"`
-	ChangedAt     time.Time `json:"changed_at"`
-}
-
-type Address struct {
-	City      string `json:"city" binding:"required"`
-	Street    string `json:"street" binding:"required"`
-	Building  string `json:"building" binding:"required"`
-=======
 type Address struct {
 	City      string `json:"city"`
 	Street    string `json:"street"`
-	Building  string `json:"building"`
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
-	Apartment string `json:"apartment"`
-	Comment   string `json:"comment"`
+	Building  string `json:"building,omitempty"`
+	Apartment string `json:"apartment,omitempty"`
+	Comment   string `json:"comment,omitempty"`
 }
 
-<<<<<<< HEAD
 type Coordinates struct {
-	Latitude  float64 `json:"latitude" binding:"required"`
-	Longitude float64 `json:"longitude" binding:"required"`
-}
-
-type OrderRequest struct {
-	FromAddress Address     `json:"from_address" binding:"required"`
-	ToAddress   Address     `json:"to_address" binding:"required"`
-	FromCoords  Coordinates `json:"from_coords" binding:"required"`
-	ToCoords    Coordinates `json:"to_coords" binding:"required"`
-	Weight      float64     `json:"weight" binding:"required"`
-	Comment     string      `json:"comment"`
-	PickupTime  time.Time   `json:"pickup_time"`
-}
-
-type OrderResponse struct {
-	OrderId           string        `json:"order_id"`
-	InitialStatus     string        `json:"initial_status"`
-	EstimatedDistance float64       `json:"estimated_distance"`
-	EstimatedDuration time.Duration `json:"estimated_duration"`
-	EstimatedPrice    float64       `json:"estimated_price"`
-}
-
-type OrderListResponse struct {
-	Orders []OrderResponse `json:"orders"`
-	Total  int             `json:"total"`
-	Page   int             `json:"page"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 type Order struct {
-	ID          string
-	UserID      string
-	FromAddress Address
-	ToAddress   Address
-	FromCoords  Coordinates
-	ToCoords    Coordinates
-	Weight      float64
-	Price       float64
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string      `json:"id"`
+	UserID      string      `json:"user_id"`
+	FromAddress Address     `json:"from_address"`
+	ToAddress   Address     `json:"to_address"`
+	FromCoords  Coordinates `json:"from_coords"`
+	ToCoords    Coordinates `json:"to_coords"`
+	Weight      float64     `json:"weight"`
+	DistanceKm  float64     `json:"distance_km"`
+	Price       float64     `json:"price"`
+	Status      string      `json:"status"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
-func NewOrder(userID string, from, to Address, fromCoords, toCoords Coordinates, weight, price float64) Order {
-=======
-type Order struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	FromAddress Address   `json:"from_address"`
-	ToAddress   Address   `json:"to_address"`
-	Weight      float64   `json:"weight"`
-	Price       float64   `json:"price"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-func NewOrder(userID string, from, to Address, weight, price float64) Order {
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+func NewOrder(userID string, from, to Address, fromCoords, toCoords Coordinates, weight, distanceKm, price float64) Order {
 	now := time.Now()
 	return Order{
-		ID:          uuid.New().String(),
+		ID:          uuid.NewString(),
 		UserID:      userID,
 		FromAddress: from,
 		ToAddress:   to,
-<<<<<<< HEAD
 		FromCoords:  fromCoords,
 		ToCoords:    toCoords,
 		Weight:      weight,
+		DistanceKm:  distanceKm,
 		Price:       price,
-		Status:      "CREATED",
-=======
-		Weight:      weight,
-		Price:       price,
-		Status:      "created",
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
+		Status:      StatusCreated,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

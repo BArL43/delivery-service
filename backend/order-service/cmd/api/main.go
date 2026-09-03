@@ -2,263 +2,173 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"order-service/internal/geocoder"
 	"order-service/internal/handlers"
-	"order-service/internal/models"
+	"order-service/internal/middleware"
 	"order-service/internal/observability"
 	"order-service/internal/pricing"
+	"order-service/internal/routing"
 	"order-service/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
-func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+func main() {
+	if err := run(); err != nil {
+		slog.Error("order-service stopped", "error", err)
+		os.Exit(1)
 	}
-	return value
 }
 
-func main() {
+func run() error {
 	ctx := context.Background()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	metrics := observability.NewCollector()
 	observability.SetLogger(logger)
 	observability.SetCollector(metrics)
 
-	connStr := getEnv("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable")
-	pool, err := pgxpool.New(ctx, connStr)
+	auth, err := middleware.NewAuthenticator(os.Getenv("JWT_SECRET"), env("JWT_ISSUER", "delivery-auth"))
 	if err != nil {
-		logger.Error("database_connection_failed", "service", "order-service", "error", err)
-		os.Exit(1)
+		return err
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(env("ORDER_DB_DSN", "postgres://postgres:postgres@localhost:5432/delivery?sslmode=disable"))
+	if err != nil {
+		return err
+	}
+	poolConfig.MaxConns = 25
+	poolConfig.MinConns = 2
+	poolConfig.MaxConnIdleTime = 15 * time.Minute
+	poolConfig.MaxConnLifetime = time.Hour
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return err
 	}
 	defer pool.Close()
-
-	if err := pool.Ping(ctx); err != nil {
-		logger.Error("database_ping_failed", "service", "order-service", "error", err)
-		os.Exit(1)
+	pingCtx, cancelPing := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPing()
+	if err := pool.Ping(pingCtx); err != nil {
+		return err
 	}
-	logger.Info("database_connected", "service", "order-service")
 
-	if err := ensureCourierSchema(ctx, pool); err != nil {
-		logger.Error("courier_schema_ensure_failed", "service", "order-service", "error", err)
-		os.Exit(1)
+	var redisClient *redis.Client
+	var geoCache geocoder.GeocodeCache
+	if redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); redisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{Addr: redisAddr})
+		cacheCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := redisClient.Ping(cacheCtx).Err(); err != nil {
+			logger.Warn("redis_unavailable_geocoding_will_bypass_cache", "error", err)
+			_ = redisClient.Close()
+			redisClient = nil
+		} else {
+			geoCache = geocoder.NewRedisGeocodeCache(redisClient)
+		}
+		cancel()
 	}
-	logger.Info("courier_schema_ready", "service", "order-service")
+	if redisClient != nil {
+		defer redisClient.Close()
+	}
 
-	pricingCfg := pricing.LoadConfig()
-	priceCalc := pricing.NewCalculator(pricingCfg)
-	logger.Info("pricing_config_loaded",
-		"service", "order-service",
-		"base_rate", pricingCfg.BaseRate,
-		"per_km_rate", pricingCfg.PerKmRate,
-		"per_kg_rate", pricingCfg.PerKgRate,
-	)
-
+	priceCalc := pricing.NewCalculator(pricing.LoadConfig())
 	orderRepo := storage.NewPostgresOrderRepository(pool)
-	if err := seedDemoOrders(ctx, orderRepo, priceCalc); err != nil {
-		logger.Error("demo_orders_seed_failed", "service", "order-service", "error", err)
-		os.Exit(1)
-	}
 	ordersHandler := handlers.NewOrdersHandler(orderRepo, priceCalc)
-
 	courierRepo := storage.NewPostgresCourierRepository(pool)
 	assignmentRepo := storage.NewPostgresAssignmentRepository(pool)
 	courierHandler := handlers.NewCourierHandler(courierRepo, assignmentRepo, orderRepo)
 
+	osm := geocoder.NewOSMProvider()
+	geoHandler := geocoder.NewGeocodeHandler(geocoder.NewService(geoCache, osm, nil))
+	routeHandler := routing.NewHandler(env("OSRM_BASE_URL", "https://router.project-osrm.org"))
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", observability.Handler())
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		healthCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(healthCtx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "database unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	mux.HandleFunc("POST /orders", ordersHandler.CreateOrder)
-	mux.HandleFunc("GET /orders", ordersHandler.ListOrders)
-	mux.HandleFunc("GET /orders/{id}", ordersHandler.GetOrder)
-	mux.HandleFunc("POST /api/v1/orders", ordersHandler.CreateOrder)
-	mux.HandleFunc("GET /api/v1/orders", ordersHandler.ListOrders)
-	mux.HandleFunc("GET /api/v1/orders/{id}", ordersHandler.GetOrder)
+	mux.HandleFunc("GET /api/v1/geocode", geoHandler.GeocodeAddress)
+	mux.HandleFunc("GET /api/v1/geocode/suggest", geoHandler.Suggest)
+	mux.HandleFunc("POST /api/v1/geocode/reverse", geoHandler.ReverseGeocode)
+	mux.HandleFunc("GET /api/geocode", geoHandler.GeocodeAddress)
+	mux.HandleFunc("GET /api/geocode/suggest", geoHandler.Suggest)
+	mux.HandleFunc("POST /api/geocode/reverse", geoHandler.ReverseGeocode)
+	mux.HandleFunc("GET /api/route", routeHandler.Route)
 
-	mux.HandleFunc("POST /api/v1/couriers/register", courierHandler.RegisterCourier)
-	mux.HandleFunc("GET /api/v1/couriers/by-email", courierHandler.GetCourierByEmail)
-	mux.HandleFunc("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
-	mux.HandleFunc("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
-	mux.HandleFunc("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)
-	mux.HandleFunc("PATCH /api/v1/orders/{orderId}/status", courierHandler.UpdateOrderStatus)
-	mux.HandleFunc("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
+	protect := func(pattern string, fn http.HandlerFunc) {
+		mux.Handle(pattern, auth.Require(fn))
+	}
+	protect("POST /orders", ordersHandler.CreateOrder)
+	protect("GET /orders", ordersHandler.ListOrders)
+	protect("GET /orders/{id}", ordersHandler.GetOrder)
+	protect("POST /api/v1/orders", ordersHandler.CreateOrder)
+	protect("GET /api/v1/orders", ordersHandler.ListOrders)
+	protect("GET /api/v1/orders/{id}", ordersHandler.GetOrder)
+	protect("POST /api/v1/couriers/register", courierHandler.RegisterCourier)
+	protect("GET /api/v1/couriers/by-email", courierHandler.GetCourierByEmail)
+	protect("POST /api/v1/couriers/availability", courierHandler.ToggleAvailability)
+	protect("POST /api/v1/couriers/location", courierHandler.UpdateLocation)
+	protect("POST /api/v1/orders/{orderId}/assign", courierHandler.AssignOrder)
+	protect("PATCH /api/v1/orders/{orderId}/status", courierHandler.UpdateOrderStatus)
+	protect("GET /api/v1/couriers/{courierId}/active-order", courierHandler.GetActiveOrder)
 
-	addr := getEnv("ORDER_HTTP_ADDR", ":8080")
 	server := &http.Server{
-		Addr:              addr,
+		Addr:              ":" + env("ORDER_PORT", "8080"),
 		Handler:           observability.Middleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(stop)
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("server_starting", "service", "order-service", "addr", addr)
+		logger.Info("server_starting", "service", "order-service", "addr", server.Addr)
 		serverErr <- server.ListenAndServe()
 	}()
 
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	select {
-	case sig := <-stop:
-		logger.Info("server_shutdown_start", "service", "order-service", "signal", sig.String())
+	case <-signalCtx.Done():
+		logger.Info("server_shutdown_requested", "service", "order-service")
 	case err := <-serverErr:
-		if err != nil && err != http.ErrServerClosed {
-			logger.Error("server_failed", "service", "order-service", "error", err)
-			return
-		}
-		return
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("server_shutdown_failed", "service", "order-service", "error", err)
-		return
-	}
-
-	logger.Info("server_exited", "service", "order-service")
-}
-
-func ensureCourierSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	statements := []string{
-		`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
-		`CREATE TABLE IF NOT EXISTS orders (
-		id UUID PRIMARY KEY,
-		user_id UUID NOT NULL,
-		from_address JSONB NOT NULL,
-		to_address JSONB NOT NULL,
-		weight DECIMAL(10,2) NOT NULL DEFAULT 0,
-		price DECIMAL(12,2) NOT NULL DEFAULT 0,
-		status TEXT NOT NULL DEFAULT 'created',
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`,
-		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight DECIMAL(10,2) NOT NULL DEFAULT 0`,
-		`CREATE TABLE IF NOT EXISTS couriers (
-		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		user_id         UUID NOT NULL UNIQUE,
-		email           TEXT NOT NULL UNIQUE,
-		full_name       TEXT NOT NULL,
-		phone           TEXT NOT NULL UNIQUE,
-		transport_type  TEXT NOT NULL DEFAULT 'bicycle',
-		is_online       BOOLEAN NOT NULL DEFAULT FALSE,
-		active_order_id UUID REFERENCES orders(id),
-		current_lat     DECIMAL(10,8),
-		current_lon     DECIMAL(11,8),
-		created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)`,
-		`CREATE TABLE IF NOT EXISTS courier_locations (
-		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		courier_id  UUID NOT NULL REFERENCES couriers(id) ON DELETE CASCADE,
-		lat         DECIMAL(10,8) NOT NULL,
-		lon         DECIMAL(11,8) NOT NULL,
-		accuracy    DECIMAL(8,2),
-		recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)`,
-		`CREATE TABLE IF NOT EXISTS courier_shifts (
-		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		courier_id  UUID NOT NULL REFERENCES couriers(id) ON DELETE CASCADE,
-		started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		ended_at    TIMESTAMPTZ,
-		is_active   BOOLEAN NOT NULL DEFAULT TRUE
-)`,
-		`CREATE TABLE IF NOT EXISTS assignments (
-		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-		order_id        UUID NOT NULL REFERENCES orders(id),
-		courier_id      UUID NOT NULL REFERENCES couriers(id),
-		status          TEXT NOT NULL DEFAULT 'assigned',
-		eta_to_pickup   INTERVAL,
-		picked_up_at    TIMESTAMPTZ,
-		delivered_at    TIMESTAMPTZ,
-		created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_order_active
-		ON assignments (order_id)
-		WHERE status IN ('assigned', 'accepted', 'at_pickup', 'in_progress')`,
-		`CREATE INDEX IF NOT EXISTS idx_couriers_location
-		ON couriers (current_lat, current_lon)
-		WHERE current_lat IS NOT NULL`,
-		`CREATE INDEX IF NOT EXISTS idx_assignments_courier_active
-		ON assignments (courier_id)
-		WHERE status IN ('assigned', 'accepted', 'at_pickup', 'in_progress')`,
-	}
-
-	for _, statement := range statements {
-		if _, err := pool.Exec(ctx, statement); err != nil {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
-	}
-
-	return nil
-}
-
-func seedDemoOrders(ctx context.Context, orderRepo storage.OrderRepository, priceCalc *pricing.Calculator) error {
-	existing, err := orderRepo.List(ctx)
-	if err != nil {
-		return err
-	}
-	if len(existing) > 0 {
 		return nil
 	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return server.Shutdown(shutdownCtx)
+}
 
-	demoOrders := []struct {
-		from     models.Address
-		to       models.Address
-		weight   float64
-		distance float64
-		status   string
-	}{
-		{
-			from:   models.Address{City: "Москва", Street: "Тверская 14"},
-			to:     models.Address{City: "Москва", Street: "Ленинский проспект 30"},
-			weight: 1.5, distance: 5.2, status: "created",
-		},
-		{
-			from:   models.Address{City: "Москва", Street: "Арбат 7"},
-			to:     models.Address{City: "Москва", Street: "Парк Победы 1"},
-			weight: 2.1, distance: 8.4, status: "SEARCHING_COURIER",
-		},
-		{
-			from:   models.Address{City: "Москва", Street: "Проспект Мира 102"},
-			to:     models.Address{City: "Москва", Street: "Кутузовский проспект 45"},
-			weight: 0.8, distance: 11.7, status: "COURIER_ASSIGNED",
-		},
-		{
-			from:   models.Address{City: "Москва", Street: "Садовая-Самотечная 7"},
-			to:     models.Address{City: "Москва", Street: "Новая Басманная 12"},
-			weight: 3.0, distance: 4.6, status: "PICKED_UP",
-		},
+func env(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
 	}
+	return fallback
+}
 
-	for _, item := range demoOrders {
-		price := priceCalc.Calculate(item.distance, item.weight)
-		order := models.NewOrder("00000000-0000-0000-0000-000000000000", item.from, item.to, item.weight, price)
-		order.Status = item.status
-		if err := orderRepo.Create(ctx, order); err != nil {
-			return err
-		}
-	}
-
-	return nil
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
 }

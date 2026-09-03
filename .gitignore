@@ -1,7 +1,16 @@
 .env
+.env.*
+!.env.example
+!.env.dockerhub.example
+
 /bin
 /vendor
 *.exe
+*.log
+
 frontend/node_modules/
 frontend/dist/
-.env.dockerhub
+
+.idea/
+.vscode/
+.DS_Store
