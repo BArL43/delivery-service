@@ -29,10 +29,9 @@ jobs:
           cache-dependency-path: ${{ matrix.service }}/go.sum
       - name: Verify formatting
         run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "Unformatted Go files:"
-            echo "$unformatted"
+          gofmt -w .
+          if ! git diff --exit-code -- .; then
+            echo "Run gofmt on the files shown above and commit the result."
             exit 1
           fi
       - name: Vet
