@@ -36,7 +36,8 @@ func (s *Service) GetCoordinates(ctx context.Context, address string) (*Coordina
 		if s.fallback == nil {
 			return nil, "", fmt.Errorf("geocoder %s failed: %w", s.primary.Name(), primaryErr)
 		}
-		coords, fallbackErr := s.fallback.Geocode(ctx, normalized)
+		var fallbackErr error
+		coords, fallbackErr = s.fallback.Geocode(ctx, normalized)
 		if fallbackErr != nil {
 			return nil, "", fmt.Errorf("primary geocoder failed: %v; fallback geocoder failed: %w", primaryErr, fallbackErr)
 		}
