@@ -30,6 +30,11 @@ jobs:
 
       - name: Apply contract fixes
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/runtime_contract_fix.py')
+          path.write_text(path.read_text().replace("r'''", "'''"))
+          PY
           python3 scripts/runtime_contract_fix.py
           gofmt -w backend/order-service/internal/storage/order_repository.go backend/order-service/internal/storage/postgres_order_repository.go backend/order-service/internal/handlers/handler.go backend/order-service/internal/handlers/courier_handler.go backend/order-service/internal/handlers/courier_handler_test.go
 
