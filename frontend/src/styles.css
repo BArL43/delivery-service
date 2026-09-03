@@ -40,12 +40,6 @@ body {
 .dashboard {
   width: min(1240px, 100%);
   margin: 0 auto;
-<<<<<<< HEAD
-  display: grid;
-  gap: 18px;
-}
-
-=======
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -63,7 +57,6 @@ body {
   order: 2;
 }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 @keyframes rise {
   from {
     opacity: 0;
@@ -148,8 +141,6 @@ body {
   flex-wrap: wrap;
 }
 
-<<<<<<< HEAD
-=======
 .topline-right {
   display: grid;
   gap: 10px;
@@ -175,7 +166,6 @@ body {
   color: var(--accent-blue);
 }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 .chip-row span {
   font-size: 12px;
   padding: 8px 12px;
@@ -221,8 +211,6 @@ body {
   font-size: 21px;
 }
 
-<<<<<<< HEAD
-=======
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -442,7 +430,6 @@ body {
   font-size: 12px;
 }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 .order-form {
   display: grid;
   gap: 12px;
@@ -583,8 +570,6 @@ textarea:focus {
   animation: soft-up 0.35s ease;
 }
 
-<<<<<<< HEAD
-=======
 .auth-page {
   display: grid;
   place-items: center;
@@ -662,7 +647,6 @@ textarea:focus {
   color: var(--error);
 }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 .map-header {
   display: flex;
   justify-content: space-between;
@@ -789,13 +773,10 @@ textarea:focus {
   gap: 10px;
 }
 
-<<<<<<< HEAD
-=======
 .hero-orders {
   margin-top: 8px;
 }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 .order-item {
   width: 100%;
   border: 1px solid rgba(31, 42, 55, 0.12);

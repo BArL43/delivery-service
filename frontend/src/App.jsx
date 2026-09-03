@@ -1,9 +1,3 @@
-<<<<<<< HEAD
-import { useEffect, useMemo, useState } from 'react';
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
-
-const STATUS_FLOW = ['Создан', 'Курьер в пути', 'Забран у отправителя', 'Доставлен'];
-=======
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMapEvents } from 'react-leaflet';
 
@@ -11,7 +5,6 @@ const STATUS_FLOW = ['Создан', 'Курьер назначен', 'Забр�
 const STORAGE_TOKEN_KEY = 'delivery_token';
 const STORAGE_PROFILE_KEY = 'delivery_profile';
 const STORAGE_COURIER_ACCEPTED_KEY = 'delivery_courier_accepted_orders';
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
 // Pricing constants (must match backend defaults)
 const PRICING = {
@@ -20,11 +13,6 @@ const PRICING = {
   PER_KG_RATE: 50,
 };
 
-<<<<<<< HEAD
-const computePrice = (distanceKm, weightKg) => {
-  const distanceBilled = Math.ceil(distanceKm);
-  return Math.round((PRICING.BASE_RATE + distanceBilled * PRICING.PER_KM_RATE + weightKg * PRICING.PER_KG_RATE) * 100) / 100;
-=======
 const buildPriceBreakdown = (distanceKm, weightKg) => {
   const distanceBilled = Math.ceil(distanceKm);
   const base = PRICING.BASE_RATE;
@@ -43,7 +31,6 @@ const buildPriceBreakdown = (distanceKm, weightKg) => {
 
 const computePrice = (distanceKm, weightKg) => {
   return buildPriceBreakdown(distanceKm, weightKg).total;
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 };
 
 const INITIAL_ORDERS = [
@@ -69,8 +56,6 @@ const INITIAL_ORDERS = [
 
 const DEFAULT_FROM_COORDS = [55.7558, 37.6176];
 const DEFAULT_TO_COORDS = [55.706, 37.5895];
-<<<<<<< HEAD
-=======
 const ORDER_STATUS_LABELS = {
   created: 'Создан',
   assigned: 'Курьер назначен',
@@ -105,7 +90,6 @@ const COURIER_STATUS_NEXT_ACTIONS = {
 
 const formatOrderStatus = (status) => ORDER_STATUS_LABELS[status] || status || '—';
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 const parseCoords = (value) => {
   const normalized = value.trim().replace(';', ',');
   const parts = normalized.split(',').map((chunk) => chunk.trim());
@@ -127,8 +111,6 @@ const parseCoords = (value) => {
 
 const routeToEta = (seconds) => `${Math.max(1, Math.round(seconds / 60))} мин`;
 
-<<<<<<< HEAD
-=======
 const getCourierNextAction = (status) => COURIER_STATUS_NEXT_ACTIONS[status] || null;
 
 const buildAddressLabel = (address) => {
@@ -154,7 +136,6 @@ const normalizeBackendOrder = (order) => ({
   eta: order.eta || '—',
 });
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 function MapClickHandler({ onPick }) {
   useMapEvents({
     click(event) {
@@ -166,8 +147,6 @@ function MapClickHandler({ onPick }) {
 }
 
 export default function App() {
-<<<<<<< HEAD
-=======
   const [session, setSession] = useState(() => {
     const token = localStorage.getItem(STORAGE_TOKEN_KEY);
     const profileRaw = localStorage.getItem(STORAGE_PROFILE_KEY);
@@ -227,7 +206,6 @@ export default function App() {
   const [profileError, setProfileError] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   const [form, setForm] = useState({
     from: '',
     to: '',
@@ -242,8 +220,6 @@ export default function App() {
   const [computedPrice, setComputedPrice] = useState(null);
   const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [activeOrderId, setActiveOrderId] = useState(INITIAL_ORDERS[0].id);
-<<<<<<< HEAD
-=======
   const [courierOrders, setCourierOrders] = useState([]);
   const [courierActiveOrderId, setCourierActiveOrderId] = useState('');
   const [acceptedCourierOrderIds, setAcceptedCourierOrderIds] = useState(() => {
@@ -259,7 +235,6 @@ export default function App() {
   const [courierError, setCourierError] = useState('');
   const [courierOnline, setCourierOnline] = useState(false);
   const [courierRefreshTick, setCourierRefreshTick] = useState(0);
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   const [formError, setFormError] = useState('');
   const [banner, setBanner] = useState('');
   const [routeInfo, setRouteInfo] = useState({
@@ -269,28 +244,16 @@ export default function App() {
     geometry: [],
     error: '',
   });
-<<<<<<< HEAD
-=======
   const [formRouteInfo, setFormRouteInfo] = useState({
     loading: false,
     distanceKm: null,
     durationMin: null,
     error: '',
   });
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   const [mapEditTarget, setMapEditTarget] = useState('from');
   const [mapExpanded, setMapExpanded] = useState(false);
   const [geoStatus, setGeoStatus] = useState({ loading: false, error: '' });
   const [addressSuggestions, setAddressSuggestions] = useState({ from: [], to: [] });
-<<<<<<< HEAD
-
-  const activeOrder = useMemo(
-    () => orders.find((order) => order.id === activeOrderId) ?? orders[0],
-    [orders, activeOrderId],
-  );
-
-  const activeStep = STATUS_FLOW.indexOf(activeOrder?.status || STATUS_FLOW[0]);
-=======
   const ordersRef = useRef(orders);
 
   useEffect(() => {
@@ -394,14 +357,10 @@ export default function App() {
   const completedOrders = orders.filter((order) => order.status === 'Доставлен').length;
   const inProgressOrders = orders.filter((order) => !['Доставлен', 'Отменён'].includes(order.status)).length;
   const recentOrders = orders.slice(0, 3);
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
   const mapCenter = useMemo(() => {
     const from = activeOrder?.fromCoords || DEFAULT_FROM_COORDS;
     const to = activeOrder?.toCoords || DEFAULT_TO_COORDS;
     return [Number(((from[0] + to[0]) / 2).toFixed(6)), Number(((from[1] + to[1]) / 2).toFixed(6))];
-<<<<<<< HEAD
-  }, [activeOrder]);
-=======
   }, [activeOrder, currentView]);
 
   const updateSession = (nextSession) => {
@@ -694,18 +653,12 @@ export default function App() {
       setProfileSaving(false);
     }
   };
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
   useEffect(() => {
     if (!activeOrder) {
       return;
     }
 
-<<<<<<< HEAD
-    const fromCoords = activeOrder.fromCoords || DEFAULT_FROM_COORDS;
-    const toCoords = activeOrder.toCoords || DEFAULT_TO_COORDS;
-    const controller = new AbortController();
-=======
     if (currentView === 'courier' && (!activeOrder.fromCoords || !activeOrder.toCoords)) {
       setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
       return;
@@ -717,66 +670,10 @@ export default function App() {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const maxAttempts = 60;
     const retryDelayMs = 5000;
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
     const loadRoute = async () => {
       setRouteInfo({ loading: true, distanceKm: null, durationMin: null, geometry: [], error: '' });
 
-<<<<<<< HEAD
-      try {
-        const query = new URLSearchParams({
-          fromLat: String(fromCoords[0]),
-          fromLon: String(fromCoords[1]),
-          toLat: String(toCoords[0]),
-          toLon: String(toCoords[1]),
-        });
-        const response = await fetch(
-          `/api/route?${query.toString()}`,
-          { signal: controller.signal },
-        );
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (!Number.isFinite(data.distance) || !Number.isFinite(data.duration)) {
-          throw new Error('Маршрут не найден');
-        }
-
-        const geometry = Array.isArray(data.geometry?.coordinates)
-          ? data.geometry.coordinates
-              .filter((pair) =>
-                Array.isArray(pair) &&
-                pair.length >= 2 &&
-                Number.isFinite(pair[0]) &&
-                Number.isFinite(pair[1]),
-              )
-              .map((pair) => [pair[1], pair[0]])
-          : [];
-
-        const distanceKm = Number((data.distance / 1000).toFixed(1));
-        const durationMin = Math.max(1, Math.round(data.duration / 60));
-        setRouteInfo({ loading: false, distanceKm, durationMin, geometry, error: '' });
-
-        const eta = routeToEta(data.duration);
-        setOrders((prev) =>
-          prev.map((order) =>
-            order.id === activeOrder.id && order.eta !== eta ? { ...order, eta } : order,
-          ),
-        );
-      } catch (error) {
-        if (error.name === 'AbortError') {
-          return;
-        }
-        setRouteInfo({
-          loading: false,
-          distanceKm: null,
-          durationMin: null,
-          geometry: [],
-          error: 'Маршрут недоступен. Проверь /api/route и контейнеры auth-service + osrm.',
-        });
-=======
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
           const query = new URLSearchParams({
@@ -850,7 +747,6 @@ export default function App() {
             error: fallbackMessage,
           });
         }
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
       }
     };
 
@@ -861,11 +757,6 @@ export default function App() {
     };
   }, [activeOrder]);
 
-<<<<<<< HEAD
-  // Compute price preview when distance and weight change
-  useEffect(() => {
-    if (routeInfo.distanceKm === null) {
-=======
   useEffect(() => {
     const fromCoords = parseCoords(form.fromCoords);
     const toCoords = parseCoords(form.toCoords);
@@ -927,15 +818,10 @@ export default function App() {
   // Compute price preview when distance and weight change
   useEffect(() => {
     if (formRouteInfo.distanceKm === null) {
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
       setComputedPrice(null);
       return;
     }
     const weight = parseFloat(form.weight) || 0;
-<<<<<<< HEAD
-    setComputedPrice(computePrice(routeInfo.distanceKm, weight));
-  }, [routeInfo.distanceKm, form.weight]);
-=======
     setComputedPrice(computePrice(formRouteInfo.distanceKm, weight));
   }, [formRouteInfo.distanceKm, form.weight]);
 
@@ -1485,7 +1371,6 @@ export default function App() {
       </main>
     );
   }
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
   const handleMapClick = (nextCoords) => {
     if (!activeOrder) {
@@ -1677,14 +1562,11 @@ export default function App() {
       return;
     }
 
-<<<<<<< HEAD
-=======
     if (formRouteInfo.distanceKm === null) {
       setFormError(formRouteInfo.error || 'Сначала рассчитай маршрут по точкам A и B.');
       return;
     }
 
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
     const fromCoords = parseCoords(form.fromCoords) || DEFAULT_FROM_COORDS;
     const toCoords = parseCoords(form.toCoords) || DEFAULT_TO_COORDS;
 
@@ -1705,25 +1587,17 @@ export default function App() {
         comment: '',
       },
       weight: parseFloat(form.weight) || 0,
-<<<<<<< HEAD
-      distance_km: routeInfo.distanceKm || 0,
-=======
       distance_km: formRouteInfo.distanceKm || 0,
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
       user_id: '00000000-0000-0000-0000-000000000000',
     };
 
     try {
       const response = await fetch('/orders', {
         method: 'POST',
-<<<<<<< HEAD
-        headers: { 'Content-Type': 'application/json' },
-=======
         headers: {
           'Content-Type': 'application/json',
           ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
         },
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
         body: JSON.stringify(orderPayload),
       });
 
@@ -1741,11 +1615,7 @@ export default function App() {
         fromCoords: fromCoords,
         toCoords: toCoords,
         status: 'Создан',
-<<<<<<< HEAD
-        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
-=======
         eta: `${Math.max(1, Math.round(formRouteInfo.durationMin || (12 + Math.random() * 20)))} мин`,
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
         price: createdOrder.price,
         weight: createdOrder.weight,
       };
@@ -1773,13 +1643,9 @@ export default function App() {
         fromCoords: fromCoords,
         toCoords: toCoords,
         status: 'Создан',
-<<<<<<< HEAD
-        eta: `${Math.max(1, Math.round(routeInfo.durationMin || (12 + Math.random() * 20)))} мин`,
-=======
         eta: `${Math.max(1, Math.round(formRouteInfo.durationMin || (12 + Math.random() * 20)))} мин`,
         price: computedPrice ?? computePrice(formRouteInfo.distanceKm, parseFloat(form.weight) || 0),
         weight: parseFloat(form.weight) || 0,
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
       };
       setOrders((prev) => [order, ...prev]);
       setActiveOrderId(order.id);
@@ -1797,33 +1663,6 @@ export default function App() {
     }
   };
 
-<<<<<<< HEAD
-  const simulateStep = () => {
-    if (!activeOrder) {
-      return;
-    }
-
-    const currentIndex = STATUS_FLOW.indexOf(activeOrder.status);
-    if (currentIndex >= STATUS_FLOW.length - 1) {
-      setBanner(`Заказ ${activeOrder.id} уже завершен.`);
-      return;
-    }
-
-    const nextStatus = STATUS_FLOW[currentIndex + 1];
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === activeOrder.id
-          ? {
-              ...order,
-              status: nextStatus,
-              eta: nextStatus === 'Доставлен' ? '0 мин' : order.eta,
-            }
-          : order,
-      ),
-    );
-    setBanner(`Статус заказа ${activeOrder.id}: ${nextStatus}.`);
-  };
-=======
   if (currentView === 'register') {
     return (
       <main className="page auth-page">
@@ -2054,7 +1893,6 @@ export default function App() {
       </main>
     );
   }
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
   return (
     <main className="page">
@@ -2062,14 +1900,6 @@ export default function App() {
         <header className="topline">
           <div>
             <p className="brand-eyebrow">Delivery Service</p>
-<<<<<<< HEAD
-            <h1>Главная панель заказов</h1>
-          </div>
-          <div className="chip-row">
-            <span>Быстрый заказ</span>
-            <span>Онлайн-карта</span>
-            <span>Статусы в реальном времени</span>
-=======
                   <h1>Заказы и доставка</h1>
                   <p className="profile-lead">Список заказов, создание новой доставки и карта маршрута в одном экране.</p>
           </div>
@@ -2082,7 +1912,6 @@ export default function App() {
             <button type="button" className="profile-btn" onClick={() => setCurrentView('profile')}>
               Профиль
             </button>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
           </div>
         </header>
 
@@ -2118,10 +1947,7 @@ export default function App() {
                     ))}
                   </ul>
                 )}
-<<<<<<< HEAD
-=======
                 <p className="field-hint">Координаты точки A определяются автоматически.</p>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
               </div>
 
               <div className="field">
@@ -2152,10 +1978,7 @@ export default function App() {
                     ))}
                   </ul>
                 )}
-<<<<<<< HEAD
-=======
                 <p className="field-hint">Координаты точки B определяются автоматически.</p>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
               </div>
 
               <div className="field-row">
@@ -2185,15 +2008,6 @@ export default function App() {
                 </div>
               </div>
 
-<<<<<<< HEAD
-              {routeInfo.distanceKm !== null && (
-                <div className="price-preview">
-                  <p>
-                    Дистанция: <strong>{routeInfo.distanceKm} км</strong>
-                    {form.weight && parseFloat(form.weight) > 0
-                      ? ` · Вес: <strong>${form.weight} кг</strong>`
-                      : ''}
-=======
               {formRouteInfo.distanceKm !== null && (
                 <div className="price-preview">
                   <p>
@@ -2204,40 +2018,10 @@ export default function App() {
                         · Вес: <strong>{form.weight} кг</strong>
                       </>
                     )}
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
                   </p>
                   <p className="price-value">
                     Стоимость доставки: <strong>{computedPrice !== null ? computedPrice + '₽' : 'рассчитывается...'}</strong>
                   </p>
-<<<<<<< HEAD
-                </div>
-              )}
-
-              <div className="field-row">
-                <div className="field">
-                  <label htmlFor="fromCoords">Координаты точки A (lat,lon)</label>
-                  <input
-                    id="fromCoords"
-                    name="fromCoords"
-                    type="text"
-                    placeholder="55.7558,37.6176"
-                    value={form.fromCoords}
-                    onChange={handleChange}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="toCoords">Координаты точки B (lat,lon)</label>
-                  <input
-                    id="toCoords"
-                    name="toCoords"
-                    type="text"
-                    placeholder="55.7060,37.5895"
-                    value={form.toCoords}
-                    onChange={handleChange}
-                  />
-                </div>
-              </div>
-=======
                   {computedPrice !== null && (
                     <div className="price-breakdown">
                       <span>База: {PRICING.BASE_RATE}₽</span>
@@ -2253,7 +2037,6 @@ export default function App() {
               )}
               {formRouteInfo.loading && <p className="field-hint">Считаем маршрут и цену для этого заказа...</p>}
               {formRouteInfo.error && <p className="api-error">{formRouteInfo.error}</p>}
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
 
               <div className="field-row">
                 <div className="field">
@@ -2369,12 +2152,9 @@ export default function App() {
             <div className="map-meta">
               <p>Клик по карте ставит {mapEditTarget === 'from' ? 'точку A' : 'точку B'}.</p>
               <p>
-<<<<<<< HEAD
-=======
                 <strong>Статус:</strong> {formatOrderStatus(activeOrder?.status)}
               </p>
               <p>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
                 <strong>Откуда:</strong> {activeOrder?.from || '—'}
               </p>
               <p>
@@ -2396,16 +2176,6 @@ export default function App() {
                     ? `${routeInfo.durationMin} мин`
                     : '—'}
               </p>
-<<<<<<< HEAD
-              {activeOrder?.price && (
-                <p>
-                  <strong>Стоимость:</strong>{' '}
-                  <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
-                    {activeOrder.price}₽
-                  </span>
-                </p>
-              )}
-=======
               {((currentView === 'order' && computedPrice !== null) || activeOrder?.price !== undefined) && (
                 <p>
                   <strong>Стоимость:</strong>{' '}
@@ -2435,7 +2205,6 @@ export default function App() {
                   </span>
                 </div>
               )}
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
               {activeOrder?.weight && (
                 <p>
                   <strong>Вес:</strong> {activeOrder.weight} кг
@@ -2463,11 +2232,7 @@ export default function App() {
                       <p>{order.to}</p>
                     </div>
                     <div className="order-aside">
-<<<<<<< HEAD
-                      <span>{order.status}</span>
-=======
                       <span>{formatOrderStatus(order.status)}</span>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
                       <small>{order.eta}</small>
                     </div>
                   </button>
@@ -2485,13 +2250,7 @@ export default function App() {
                 </li>
               ))}
             </ol>
-<<<<<<< HEAD
-            <button type="button" className="submit-btn ghost" onClick={simulateStep}>
-              Обновить статус
-            </button>
-=======
             <p className="panel-caption">Текущий статус: {formatOrderStatus(activeOrder?.status)}.</p>
->>>>>>> 6675d8db0acd470bb323dea533e3812d29de2aab
           </article>
         </section>
       </section>
