@@ -7,14 +7,15 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 
+	"order-service/internal/middleware"
 	"order-service/internal/models"
 	"order-service/internal/observability"
 	"order-service/internal/storage"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type CourierHandler struct {
@@ -28,198 +29,191 @@ func NewCourierHandler(
 	assignmentRepo storage.AssignmentRepository,
 	orderRepo storage.OrderRepository,
 ) *CourierHandler {
-	return &CourierHandler{
-		courierRepo:    courierRepo,
-		assignmentRepo: assignmentRepo,
-		orderRepo:      orderRepo,
-	}
+	return &CourierHandler{courierRepo: courierRepo, assignmentRepo: assignmentRepo, orderRepo: orderRepo}
 }
 
-// RegisterCourier handles POST /api/v1/couriers/register
 func (h *CourierHandler) RegisterCourier(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
 	var req struct {
 		Email         string `json:"email"`
 		FullName      string `json:"full_name"`
 		Phone         string `json:"phone"`
 		TransportType string `json:"transport_type"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("courier_register_decode_error", "error", err)
+	if err := decodeJSON(w, r, &req); err != nil {
 		observability.Stats().ObserveBusiness("courier_register", "failure")
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	req.Email = strings.TrimSpace(req.Email)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.FullName = strings.TrimSpace(req.FullName)
 	req.Phone = strings.TrimSpace(req.Phone)
 	req.TransportType = strings.TrimSpace(req.TransportType)
 	if req.TransportType == "" {
 		req.TransportType = "bicycle"
 	}
-
-	if req.Email == "" || req.FullName == "" || req.Phone == "" {
+	if req.Email == "" || req.FullName == "" || req.Phone == "" || !validTransport(req.TransportType) {
 		observability.Stats().ObserveBusiness("courier_register", "failure")
-		jsonError(w, http.StatusBadRequest, "email, full_name and phone are required")
+		jsonError(w, http.StatusBadRequest, "valid email, full_name, phone and transport_type are required")
 		return
 	}
 
-	if existingCourier, err := h.courierRepo.GetByEmail(r.Context(), req.Email); err == nil {
-		observability.Logger().Info("courier_register_idempotent", "courier_id", existingCourier.ID, "email", existingCourier.Email)
+	if existing, err := h.courierRepo.GetByUserID(r.Context(), userID); err == nil {
 		observability.Stats().ObserveBusiness("courier_register", "success")
-		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"courier_id":     existingCourier.ID,
-			"user_id":        existingCourier.UserID,
-			"email":          existingCourier.Email,
-			"full_name":      existingCourier.FullName,
-			"phone":          existingCourier.Phone,
-			"transport_type": existingCourier.TransportType,
-			"is_online":      existingCourier.IsOnline,
-		})
+		writeCourier(w, http.StatusOK, existing)
 		return
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		observability.Logger().Error("courier_register_lookup_failed", "error", err, "email", req.Email)
+		observability.Logger().Error("courier_register_user_lookup_failed", "error", err, "user_id", userID)
 		observability.Stats().ObserveBusiness("courier_register", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to check existing courier profile")
+		jsonError(w, http.StatusInternalServerError, "failed to check courier profile")
 		return
 	}
 
-	courier := models.NewCourier(uuid.NewString(), req.Email, req.FullName, req.Phone, req.TransportType)
+	if existing, err := h.courierRepo.GetByEmail(r.Context(), req.Email); err == nil {
+		if existing.UserID != userID {
+			observability.Stats().ObserveBusiness("courier_register", "failure")
+			jsonError(w, http.StatusConflict, "email is already used by another courier")
+			return
+		}
+		writeCourier(w, http.StatusOK, existing)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		observability.Logger().Error("courier_register_email_lookup_failed", "error", err, "email", req.Email)
+		observability.Stats().ObserveBusiness("courier_register", "failure")
+		jsonError(w, http.StatusInternalServerError, "failed to check courier email")
+		return
+	}
+
+	courier := models.NewCourier(userID, req.Email, req.FullName, req.Phone, req.TransportType)
 	if err := h.courierRepo.Create(r.Context(), courier); err != nil {
-		observability.Logger().Error("courier_register_create_failed", "error", err, "email", req.Email)
+		observability.Logger().Error("courier_register_create_failed", "error", err, "user_id", userID)
 		observability.Stats().ObserveBusiness("courier_register", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to create courier profile")
 		return
 	}
 
-	observability.Logger().Info("courier_registered", "courier_id", courier.ID, "email", courier.Email, "transport_type", courier.TransportType)
+	observability.Logger().Info("courier_registered", "courier_id", courier.ID, "user_id", userID)
 	observability.Stats().ObserveBusiness("courier_register", "success")
-
-	jsonResponse(w, http.StatusCreated, map[string]interface{}{
-		"courier_id":     courier.ID,
-		"user_id":        courier.UserID,
-		"email":          courier.Email,
-		"full_name":      courier.FullName,
-		"phone":          courier.Phone,
-		"transport_type": courier.TransportType,
-		"is_online":      courier.IsOnline,
-	})
+	writeCourier(w, http.StatusCreated, &courier)
 }
 
-// GetCourierByEmail handles GET /api/v1/couriers/by-email?email=...
 func (h *CourierHandler) GetCourierByEmail(w http.ResponseWriter, r *http.Request) {
-	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("email")))
 	if email == "" {
-		observability.Stats().ObserveBusiness("courier_lookup", "failure")
 		jsonError(w, http.StatusBadRequest, "email is required")
 		return
 	}
 
 	courier, err := h.courierRepo.GetByEmail(r.Context(), email)
-	if err != nil {
-		observability.Logger().Warn("courier_lookup_failed", "error", err, "email", email)
-		observability.Stats().ObserveBusiness("courier_lookup", "failure")
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && courier.UserID != userID) {
 		jsonError(w, http.StatusNotFound, "courier not found")
 		return
 	}
-
-	observability.Stats().ObserveBusiness("courier_lookup", "success")
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"courier_id":      courier.ID,
-		"user_id":         courier.UserID,
-		"email":           courier.Email,
-		"full_name":       courier.FullName,
-		"phone":           courier.Phone,
-		"transport_type":  courier.TransportType,
-		"is_online":       courier.IsOnline,
-		"active_order_id": courier.ActiveOrderID,
-	})
+	if err != nil {
+		observability.Logger().Error("courier_lookup_failed", "error", err, "user_id", userID)
+		jsonError(w, http.StatusInternalServerError, "failed to get courier")
+		return
+	}
+	writeCourier(w, http.StatusOK, courier)
 }
 
-// ToggleAvailability handles POST /couriers/availability
 func (h *CourierHandler) ToggleAvailability(w http.ResponseWriter, r *http.Request) {
+	courier, ok := h.loadOwnedCourier(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		CourierID     string `json:"courier_id"`
 		IsOnline      bool   `json:"is_online"`
 		TransportType string `json:"transport_type"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("courier_availability_decode_error", "error", err)
-		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
+	if err := decodeJSON(w, r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	if req.CourierID == "" {
-		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
-		jsonError(w, http.StatusBadRequest, "courier_id is required")
+	if requestedID := strings.TrimSpace(req.CourierID); requestedID != "" && requestedID != courier.ID {
+		jsonError(w, http.StatusForbidden, "cannot update another courier")
 		return
 	}
-
-	if err := h.courierRepo.UpdateStatus(r.Context(), req.CourierID, req.IsOnline, req.TransportType); err != nil {
-		observability.Logger().Error("courier_availability_update_failed", "error", err, "courier_id", req.CourierID)
-		observability.Stats().ObserveBusiness("courier_availability_update", "failure")
+	req.TransportType = strings.TrimSpace(req.TransportType)
+	if req.TransportType == "" {
+		req.TransportType = courier.TransportType
+	}
+	if !validTransport(req.TransportType) {
+		jsonError(w, http.StatusBadRequest, "unsupported transport_type")
+		return
+	}
+	if err := h.courierRepo.UpdateStatus(r.Context(), courier.ID, req.IsOnline, req.TransportType); err != nil {
+		observability.Logger().Error("courier_availability_update_failed", "error", err, "courier_id", courier.ID)
 		jsonError(w, http.StatusInternalServerError, "failed to update availability")
 		return
 	}
-
-	observability.Logger().Info("courier_availability_updated", "courier_id", req.CourierID, "is_online", req.IsOnline, "transport_type", req.TransportType)
 	observability.Stats().ObserveBusiness("courier_availability_update", "success")
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"courier_id":     req.CourierID,
-		"is_online":      req.IsOnline,
-		"transport_type": req.TransportType,
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"courier_id": courier.ID, "is_online": req.IsOnline, "transport_type": req.TransportType,
 	})
 }
 
-// UpdateLocation handles POST /couriers/location
 func (h *CourierHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
+	courier, ok := h.loadOwnedCourier(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		CourierID string  `json:"courier_id"`
 		Lat       float64 `json:"lat"`
 		Lon       float64 `json:"lon"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("courier_location_decode_error", "error", err)
-		observability.Stats().ObserveBusiness("courier_location_update", "failure")
+	if err := decodeJSON(w, r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	if req.CourierID == "" {
-		observability.Stats().ObserveBusiness("courier_location_update", "failure")
-		jsonError(w, http.StatusBadRequest, "courier_id is required")
+	if requestedID := strings.TrimSpace(req.CourierID); requestedID != "" && requestedID != courier.ID {
+		jsonError(w, http.StatusForbidden, "cannot update another courier")
 		return
 	}
-
-	if err := h.courierRepo.UpdateLocation(r.Context(), req.CourierID, req.Lat, req.Lon); err != nil {
-		observability.Logger().Error("courier_location_update_failed", "error", err, "courier_id", req.CourierID)
-		observability.Stats().ObserveBusiness("courier_location_update", "failure")
+	if !validLatLon(req.Lat, req.Lon) {
+		jsonError(w, http.StatusBadRequest, "invalid latitude or longitude")
+		return
+	}
+	if err := h.courierRepo.UpdateLocation(r.Context(), courier.ID, req.Lat, req.Lon); err != nil {
+		observability.Logger().Error("courier_location_update_failed", "error", err, "courier_id", courier.ID)
 		jsonError(w, http.StatusInternalServerError, "failed to update location")
 		return
 	}
-
-	observability.Logger().Info("courier_location_updated", "courier_id", req.CourierID, "lat", req.Lat, "lon", req.Lon)
 	observability.Stats().ObserveBusiness("courier_location_update", "success")
-
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// AssignOrder handles POST /orders/{orderId}/assign
 func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
-	orderId := strings.TrimSpace(r.PathValue("orderId"))
-	if orderId == "" {
-		path := strings.TrimPrefix(r.URL.Path, "/orders/")
-		path = strings.TrimPrefix(path, "/api/v1/orders/")
-		path = strings.TrimSuffix(path, "/")
-		orderId = strings.TrimSuffix(path, "/assign")
-		orderId = strings.TrimSuffix(orderId, "/")
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
 	}
-
-	if orderId == "" {
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
-		jsonError(w, http.StatusBadRequest, "order_id is required")
+	orderID := strings.TrimSpace(r.PathValue("orderId"))
+	if _, err := uuid.Parse(orderID); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid order_id")
+		return
+	}
+	order, err := h.orderRepo.GetByID(r.Context(), orderID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && order.UserID != userID) {
+		jsonError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "failed to get order")
 		return
 	}
 
@@ -227,250 +221,191 @@ func (h *CourierHandler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		CourierID string `json:"courier_id"`
 		Mode      string `json:"mode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("courier_assign_decode_error", "error", err)
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
+	if err := decodeJSON(w, r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "auto"
+	}
 
 	var courierID string
-
-	if req.Mode == "auto" {
+	switch mode {
+	case "auto":
 		couriers, err := h.courierRepo.FindAvailable(r.Context())
 		if err != nil {
-			observability.Logger().Error("courier_assign_find_available_failed", "error", err, "order_id", orderId)
-			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusInternalServerError, "failed to find available couriers")
 			return
 		}
 		if len(couriers) == 0 {
-			observability.Stats().ObserveBusiness("courier_assign", "failure")
 			jsonError(w, http.StatusNotFound, "no available couriers")
 			return
 		}
-
-		// Pick the first available courier (closest by proximity)
 		courierID = couriers[0].ID
-	} else {
-		if req.CourierID == "" {
-			observability.Stats().ObserveBusiness("courier_assign", "failure")
+	case "manual":
+		courierID = strings.TrimSpace(req.CourierID)
+		if courierID == "" {
 			jsonError(w, http.StatusBadRequest, "courier_id is required for manual mode")
 			return
 		}
-		courierID = req.CourierID
-	}
-
-	// Create assignment
-	assignment := models.NewAssignment(orderId, courierID, 0)
-	if err := h.assignmentRepo.Create(r.Context(), assignment); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			observability.Stats().ObserveBusiness("courier_assign", "failure")
-			jsonError(w, http.StatusConflict, "order is already assigned to a courier")
-			return
-		}
-		observability.Logger().Error("courier_assign_create_failed", "error", err, "order_id", orderId, "courier_id", courierID)
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to create assignment")
+	default:
+		jsonError(w, http.StatusBadRequest, "mode must be auto or manual")
 		return
 	}
 
-	// Update courier's active order
-	if err := h.courierRepo.SetActiveOrder(r.Context(), courierID, orderId); err != nil {
-		observability.Logger().Error("courier_assign_set_active_failed", "error", err, "order_id", orderId, "courier_id", courierID)
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to set active order")
-		return
-	}
-
-	if err := h.orderRepo.UpdateStatus(r.Context(), orderId, "assigned"); err != nil {
-		observability.Logger().Error("courier_assign_order_status_failed", "error", err, "order_id", orderId, "courier_id", courierID)
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to mark order as assigned")
-		return
-	}
-
-	// Get courier for ETA calculation
 	courier, err := h.courierRepo.GetByID(r.Context(), courierID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		jsonError(w, http.StatusNotFound, "courier not found")
+		return
+	}
 	if err != nil {
-		observability.Logger().Error("courier_assign_get_courier_failed", "error", err, "order_id", orderId, "courier_id", courierID)
-		observability.Stats().ObserveBusiness("courier_assign", "failure")
 		jsonError(w, http.StatusInternalServerError, "failed to get courier")
 		return
 	}
-
-	// Compute ETA using default distance of 5 km
-	eta := computeETA(courier.TransportType, 5.0)
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"courier_id": courierID,
-		"eta":        eta,
-	})
-
-	observability.Logger().Info("courier_assigned", "order_id", orderId, "courier_id", courierID, "eta", eta, "mode", req.Mode)
-	observability.Stats().ObserveBusiness("courier_assign", "success")
-}
-
-// GetActiveOrder handles GET /couriers/{courierId}/active-order
-func (h *CourierHandler) GetActiveOrder(w http.ResponseWriter, r *http.Request) {
-	courierId := strings.TrimSpace(r.PathValue("courierId"))
-	if courierId == "" {
-		path := strings.TrimPrefix(r.URL.Path, "/couriers/")
-		path = strings.TrimPrefix(path, "/api/v1/couriers/")
-		path = strings.TrimSuffix(path, "/")
-		courierId = strings.TrimSuffix(path, "/active-order")
-		courierId = strings.TrimSuffix(courierId, "/")
-	}
-
-	if courierId == "" {
-		observability.Stats().ObserveBusiness("courier_active_order_lookup", "failure")
-		jsonError(w, http.StatusBadRequest, "courier_id is required")
+	etaDuration := computeETADuration(courier.TransportType, order.DistanceKm)
+	assignment := models.NewAssignment(orderID, courierID, etaDuration)
+	if err := h.assignmentRepo.Assign(r.Context(), assignment); err != nil {
+		switch {
+		case errors.Is(err, storage.ErrCourierNotFound):
+			jsonError(w, http.StatusNotFound, "courier not found")
+		case errors.Is(err, storage.ErrOrderNotFound):
+			jsonError(w, http.StatusNotFound, "order not found")
+		case errors.Is(err, storage.ErrCourierBusy), errors.Is(err, storage.ErrCourierUnavailable),
+			errors.Is(err, storage.ErrOrderAlreadyAssigned), errors.Is(err, storage.ErrOrderNotAssignable):
+			jsonError(w, http.StatusConflict, err.Error())
+		default:
+			observability.Logger().Error("courier_assign_failed", "error", err, "order_id", orderID, "courier_id", courierID)
+			jsonError(w, http.StatusInternalServerError, "failed to assign order")
+		}
 		return
 	}
 
-	order, err := h.courierRepo.GetActiveCourierOrder(r.Context(), courierId)
-	if err != nil {
-		observability.Stats().ObserveBusiness("courier_active_order_lookup", "failure")
+	observability.Logger().Info("courier_assigned", "order_id", orderID, "courier_id", courierID, "mode", mode)
+	observability.Stats().ObserveBusiness("courier_assign", "success")
+	jsonResponse(w, http.StatusOK, map[string]any{"courier_id": courierID, "eta": computeETA(courier.TransportType, order.DistanceKm)})
+}
+
+func (h *CourierHandler) GetActiveOrder(w http.ResponseWriter, r *http.Request) {
+	courier, ok := h.loadOwnedCourier(w, r)
+	if !ok {
+		return
+	}
+	requestedID := strings.TrimSpace(r.PathValue("courierId"))
+	if requestedID != "" && requestedID != courier.ID {
+		jsonError(w, http.StatusForbidden, "cannot read another courier")
+		return
+	}
+	order, err := h.courierRepo.GetActiveCourierOrder(r.Context(), courier.ID)
+	if err != nil || order == nil {
 		jsonError(w, http.StatusNotFound, "no active order for this courier")
 		return
 	}
-
-	observability.Stats().ObserveBusiness("courier_active_order_lookup", "success")
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"order_id":     order.ID,
-		"from_address": order.FromAddress,
-		"to_address":   order.ToAddress,
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"order_id": order.ID, "from_address": order.FromAddress, "to_address": order.ToAddress,
 	})
 }
 
-// UpdateOrderStatus handles PATCH /api/v1/orders/{orderId}/status
 func (h *CourierHandler) UpdateOrderStatus(w http.ResponseWriter, r *http.Request) {
-	orderId := strings.TrimSpace(r.PathValue("orderId"))
-	if orderId == "" {
-		path := strings.TrimPrefix(r.URL.Path, "/orders/")
-		path = strings.TrimPrefix(path, "/api/v1/orders/")
-		path = strings.TrimSuffix(path, "/")
-		orderId = strings.TrimSuffix(path, "/status")
-		orderId = strings.TrimSuffix(orderId, "/")
-	}
-
-	if orderId == "" {
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusBadRequest, "order_id is required")
+	courier, ok := h.loadOwnedCourier(w, r)
+	if !ok {
 		return
 	}
-
+	orderID := strings.TrimSpace(r.PathValue("orderId"))
+	if _, err := uuid.Parse(orderID); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid order_id")
+		return
+	}
 	var req struct {
 		CourierID string `json:"courier_id"`
 		Status    string `json:"status"`
 		Reason    string `json:"reason"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		observability.Logger().Warn("courier_order_status_decode_error", "error", err)
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+	if err := decodeJSON(w, r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	req.CourierID = strings.TrimSpace(req.CourierID)
-	req.Status = strings.TrimSpace(req.Status)
-	if req.CourierID == "" || req.Status == "" {
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusBadRequest, "courier_id and status are required")
+	if requestedID := strings.TrimSpace(req.CourierID); requestedID != "" && requestedID != courier.ID {
+		jsonError(w, http.StatusForbidden, "cannot update another courier's order")
 		return
 	}
-
-	allowedStatuses := map[string]bool{
-		"assigned":    true,
-		"at_pickup":   true,
-		"in_progress": true,
-		"delivered":   true,
-		"cancelled":   true,
-	}
-	if !allowedStatuses[req.Status] {
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	if status != models.StatusAtPickup && status != models.StatusInProgress && status != models.StatusDelivered && status != models.StatusCancelled {
 		jsonError(w, http.StatusBadRequest, "unsupported status")
 		return
 	}
 
-	assignment, err := h.assignmentRepo.GetByOrderID(r.Context(), orderId)
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			observability.Logger().Warn("courier_order_status_assignment_lookup_failed", "error", err, "order_id", orderId)
-			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
+	if err := h.assignmentRepo.Transition(r.Context(), orderID, courier.ID, status); err != nil {
+		switch {
+		case errors.Is(err, storage.ErrAssignmentNotFound), errors.Is(err, storage.ErrOrderNotFound):
 			jsonError(w, http.StatusNotFound, "assignment not found")
-			return
+		case errors.Is(err, storage.ErrAssignmentOwnership):
+			jsonError(w, http.StatusForbidden, "order is assigned to another courier")
+		case errors.Is(err, storage.ErrInvalidTransition):
+			jsonError(w, http.StatusConflict, "invalid status transition")
+		default:
+			observability.Logger().Error("courier_order_status_update_failed", "error", err, "order_id", orderID, "courier_id", courier.ID)
+			jsonError(w, http.StatusInternalServerError, "failed to update order status")
 		}
-
-		courier, courierErr := h.courierRepo.GetByID(r.Context(), req.CourierID)
-		if courierErr != nil || courier.ActiveOrderID == nil || *courier.ActiveOrderID != orderId {
-			fallbackCourier, fallbackErr := h.courierRepo.GetByActiveOrderID(r.Context(), orderId)
-			if fallbackErr != nil {
-				observability.Logger().Warn("courier_order_status_courier_lookup_failed", "error", fallbackErr, "order_id", orderId, "courier_id", req.CourierID)
-				observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-				jsonError(w, http.StatusNotFound, "assignment not found")
-				return
-			}
-			courier = fallbackCourier
-		}
-
-		repaired := models.NewAssignment(orderId, req.CourierID, 0)
-		if courier != nil {
-			repaired.CourierID = courier.ID
-		}
-		if createErr := h.assignmentRepo.Create(r.Context(), repaired); createErr != nil {
-			observability.Logger().Warn("courier_order_status_assignment_repair_failed", "error", createErr, "order_id", orderId, "courier_id", req.CourierID)
-			observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-			jsonError(w, http.StatusNotFound, "assignment not found")
-			return
-		}
-
-		assignment = &repaired
-	}
-	if assignment.CourierID != req.CourierID {
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusForbidden, "order is assigned to another courier")
 		return
 	}
 
-	if err := h.orderRepo.UpdateStatus(r.Context(), orderId, req.Status); err != nil {
-		observability.Logger().Error("courier_order_status_order_update_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to update order status")
-		return
-	}
-
-	if err := h.assignmentRepo.UpdateStatus(r.Context(), orderId, req.Status); err != nil {
-		observability.Logger().Error("courier_order_status_assignment_update_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
-		observability.Stats().ObserveBusiness("courier_order_status_update", "failure")
-		jsonError(w, http.StatusInternalServerError, "failed to update assignment status")
-		return
-	}
-
-	if req.Status == "delivered" {
-		if err := h.courierRepo.UnassignActiveOrder(r.Context(), req.CourierID); err != nil {
-			observability.Logger().Warn("courier_order_status_unassign_failed", "error", err, "order_id", orderId, "courier_id", req.CourierID)
-		}
-	}
-
-	observability.Logger().Info("courier_order_status_updated", "order_id", orderId, "courier_id", req.CourierID, "status", req.Status)
+	observability.Logger().Info("courier_order_status_updated", "order_id", orderID, "courier_id", courier.ID, "status", status)
 	observability.Stats().ObserveBusiness("courier_order_status_update", "success")
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"order_id":   orderId,
-		"courier_id": req.CourierID,
-		"status":     req.Status,
-		"reason":     req.Reason,
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"order_id": orderID, "courier_id": courier.ID, "status": status, "reason": strings.TrimSpace(req.Reason),
 	})
 }
 
-func computeETA(transportType string, distanceKm float64) string {
+func (h *CourierHandler) loadOwnedCourier(w http.ResponseWriter, r *http.Request) (*models.Courier, bool) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return nil, false
+	}
+	courier, err := h.courierRepo.GetByUserID(r.Context(), userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		jsonError(w, http.StatusNotFound, "courier profile not found")
+		return nil, false
+	}
+	if err != nil {
+		observability.Logger().Error("courier_owner_lookup_failed", "error", err, "user_id", userID)
+		jsonError(w, http.StatusInternalServerError, "failed to get courier profile")
+		return nil, false
+	}
+	return courier, true
+}
+
+func writeCourier(w http.ResponseWriter, status int, courier *models.Courier) {
+	jsonResponse(w, status, map[string]any{
+		"courier_id": courier.ID,
+		"user_id": courier.UserID,
+		"email": courier.Email,
+		"full_name": courier.FullName,
+		"phone": courier.Phone,
+		"transport_type": courier.TransportType,
+		"is_online": courier.IsOnline,
+		"active_order_id": courier.ActiveOrderID,
+	})
+}
+
+func validTransport(transportType string) bool {
+	switch transportType {
+	case "bicycle", "scooter", "car":
+		return true
+	default:
+		return false
+	}
+}
+
+func validLatLon(lat, lon float64) bool {
+	return !math.IsNaN(lat) && !math.IsNaN(lon) && !math.IsInf(lat, 0) && !math.IsInf(lon, 0) &&
+		lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
+}
+
+func computeETADuration(transportType string, distanceKm float64) time.Duration {
 	var speedKmh float64
 	switch transportType {
-	case "bicycle":
-		speedKmh = 15
 	case "scooter":
 		speedKmh = 25
 	case "car":
@@ -478,15 +413,21 @@ func computeETA(transportType string, distanceKm float64) string {
 	default:
 		speedKmh = 15
 	}
-
 	minutes := int(math.Round(distanceKm / speedKmh * 60))
-	return fmt.Sprintf("%dm", minutes)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func computeETA(transportType string, distanceKm float64) string {
+	return fmt.Sprintf("%dm", int(computeETADuration(transportType, distanceKm)/time.Minute))
 }
 
 func jsonResponse(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {

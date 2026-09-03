@@ -2,12 +2,14 @@ package storage
 
 import (
 	"context"
+
 	"order-service/internal/models"
 )
 
 type CourierRepository interface {
 	Create(ctx context.Context, courier models.Courier) error
 	GetByID(ctx context.Context, id string) (*models.Courier, error)
+	GetByUserID(ctx context.Context, userID string) (*models.Courier, error)
 	GetByEmail(ctx context.Context, email string) (*models.Courier, error)
 	GetByActiveOrderID(ctx context.Context, orderID string) (*models.Courier, error)
 	UpdateStatus(ctx context.Context, id string, isOnline bool, transportType string) error
@@ -20,9 +22,11 @@ type CourierRepository interface {
 
 type AssignmentRepository interface {
 	Create(ctx context.Context, a models.Assignment) error
+	Assign(ctx context.Context, a models.Assignment) error
 	GetByOrderID(ctx context.Context, orderID string) (*models.Assignment, error)
 	GetActiveByCourierID(ctx context.Context, courierID string) (*models.Assignment, error)
 	UpdateStatus(ctx context.Context, orderID string, newStatus string) error
+	Transition(ctx context.Context, orderID, courierID, newStatus string) error
 }
 
 type CourierLocationRepository interface {

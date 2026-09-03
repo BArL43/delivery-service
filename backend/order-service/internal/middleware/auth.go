@@ -63,10 +63,14 @@ func (a *Authenticator) Require(next http.Handler) http.Handler {
 			jsonAuthError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		ctx := context.WithValue(r.Context(), userIDKey, strconv.FormatInt(claims.UserID, 10))
-		ctx = context.WithValue(ctx, roleKey, claims.Role)
+		ctx := WithIdentity(r.Context(), strconv.FormatInt(claims.UserID, 10), claims.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func WithIdentity(ctx context.Context, userID, role string) context.Context {
+	ctx = context.WithValue(ctx, userIDKey, userID)
+	return context.WithValue(ctx, roleKey, role)
 }
 
 func UserID(ctx context.Context) (string, bool) {
