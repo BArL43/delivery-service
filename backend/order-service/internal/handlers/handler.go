@@ -70,7 +70,7 @@ func (h *OrdersHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	observability.Stats().ObserveBusiness("order_create", "success")
 	jsonResponse(w, http.StatusCreated, map[string]any{
-		"order": order,
+		"order":                      order,
 		"estimated_duration_minutes": int(math.Ceil(distanceKm / 15 * 60)),
 	})
 }

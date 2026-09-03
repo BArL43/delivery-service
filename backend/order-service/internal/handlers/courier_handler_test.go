@@ -70,7 +70,9 @@ func (m *mockCourierRepo) GetActiveCourierOrder(_ context.Context, courierID str
 	return nil, pgx.ErrNoRows
 }
 func (m *mockCourierRepo) UnassignActiveOrder(_ context.Context, _ string) error { return nil }
-func (m *mockCourierRepo) FindAvailable(_ context.Context) ([]models.Courier, error) { return m.available, nil }
+func (m *mockCourierRepo) FindAvailable(_ context.Context) ([]models.Courier, error) {
+	return m.available, nil
+}
 func (m *mockCourierRepo) SetActiveOrder(_ context.Context, _, _ string) error { return nil }
 
 type mockAssignmentRepo struct {
@@ -110,7 +112,7 @@ func (m *mockOrderRepo) GetByID(_ context.Context, id string) (*models.Order, er
 	copy := *m.order
 	return &copy, nil
 }
-func (m *mockOrderRepo) List(_ context.Context) ([]models.Order, error) { return nil, nil }
+func (m *mockOrderRepo) List(_ context.Context) ([]models.Order, error)    { return nil, nil }
 func (m *mockOrderRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
 func withUser(req *http.Request, userID string) *http.Request {

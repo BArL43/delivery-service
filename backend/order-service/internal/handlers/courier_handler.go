@@ -378,13 +378,13 @@ func (h *CourierHandler) loadOwnedCourier(w http.ResponseWriter, r *http.Request
 
 func writeCourier(w http.ResponseWriter, status int, courier *models.Courier) {
 	jsonResponse(w, status, map[string]any{
-		"courier_id": courier.ID,
-		"user_id": courier.UserID,
-		"email": courier.Email,
-		"full_name": courier.FullName,
-		"phone": courier.Phone,
-		"transport_type": courier.TransportType,
-		"is_online": courier.IsOnline,
+		"courier_id":      courier.ID,
+		"user_id":         courier.UserID,
+		"email":           courier.Email,
+		"full_name":       courier.FullName,
+		"phone":           courier.Phone,
+		"transport_type":  courier.TransportType,
+		"is_online":       courier.IsOnline,
 		"active_order_id": courier.ActiveOrderID,
 	})
 }
