@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"projectYandexLyceumFinal/internal/handlers"
+	"projectYandexLyceumFinal/internal/middleware"
 	"projectYandexLyceumFinal/internal/utils"
 
 	"github.com/gin-gonic/gin"
@@ -57,6 +58,7 @@ func run() error {
 	router.Use(gin.Logger(), gin.Recovery(), corsMiddleware(parseOrigins(env("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"))))
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
+	router.PATCH("/api/auth/profile", middleware.Auth(tokens), authHandler.UpdateProfile)
 	router.GET("/health", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
@@ -127,7 +129,7 @@ func corsMiddleware(allowed map[string]struct{}) gin.HandlerFunc {
 			}
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		}
 		if c.Request.Method == http.MethodOptions {

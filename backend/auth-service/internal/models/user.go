@@ -15,9 +15,16 @@ type RegisterInput struct {
 	Email           string `json:"email" binding:"required,email,max=254"`
 	Password        string `json:"password" binding:"required,min=8,max=72"`
 	ConfirmPassword string `json:"confirmPassword" binding:"required,eqfield=Password"`
+	Role            string `json:"role" binding:"omitempty,oneof=client courier"`
 }
 
 type LoginInput struct {
 	Login    string `json:"login" binding:"required,max=254"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
+}
+
+type UpdateProfileInput struct {
+	Name        string `json:"name" binding:"required,min=2,max=100"`
+	PhoneNumber string `json:"phone" binding:"required,min=10,max=20"`
+	Email       string `json:"email" binding:"required,email,max=254"`
 }
