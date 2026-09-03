@@ -1,0 +1,33 @@
+name: One-time gofmt
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/order-service/go.mod
+      - name: Apply gofmt
+        run: gofmt -w backend/order-service/internal/handlers/courier_handler.go backend/order-service/internal/handlers/courier_handler_test.go backend/order-service/internal/handlers/handler.go
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then
+            echo "Nothing to format"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/order-service/internal/handlers/courier_handler.go backend/order-service/internal/handlers/courier_handler_test.go backend/order-service/internal/handlers/handler.go
+          git commit -m "style: apply gofmt to order service"
+          git push origin HEAD:main
