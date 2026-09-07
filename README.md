@@ -1,6 +1,19 @@
 # Delivery Service
 
+![CI](https://github.com/BArL43/delivery-service/actions/workflows/ci.yml/badge.svg)
+
 Учебный full-stack проект сервиса доставки, выполненный с фокусом на backend-разработку на Go. Репозиторий показывает работу с несколькими сервисами, PostgreSQL, Redis, JWT, Docker, CI/CD и observability.
+
+## Быстрый просмотр кода
+
+Если нужно быстро оценить backend-часть проекта:
+
+- [`backend/auth-service/cmd/api/main.go`](backend/auth-service/cmd/api/main.go) — запуск auth-service, wiring зависимостей и lifecycle HTTP-сервера;
+- [`backend/auth-service/internal/`](backend/auth-service/internal/) — авторизация, JWT, профиль пользователя и работа с PostgreSQL;
+- [`backend/order-service/cmd/api/main.go`](backend/order-service/cmd/api/main.go) — запуск order-service и подключение API/инфраструктуры;
+- [`backend/order-service/internal/`](backend/order-service/internal/) — заказы, курьеры, геокодирование, Redis-кеш и бизнес-логика;
+- [`observability/`](observability/) — Prometheus, Grafana, Loki и Promtail;
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — formatting, `go vet`, race tests, frontend build и Docker checks.
 
 ## Что внутри
 
